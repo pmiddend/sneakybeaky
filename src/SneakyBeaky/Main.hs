@@ -25,6 +25,7 @@ data ObstacleTile = ObstacleTile {
 data World = World {
     wHero :: Coord
   , wObstacles :: [ObstacleTile]
+  , wExit :: Coord
 }
 
 data Input = Up
@@ -37,8 +38,8 @@ data Input = Up
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: World
-initialWorld = World (0,0) []
+initialWorld :: [ObstacleTile] -> World
+initialWorld obstacles = World (0,0) obstacles (10,10)
 
 generateObstacles :: RandomGen g => Rand g [ObstacleTile]
 generateObstacles = return [ObstacleTile (Tile {tCharacter = '|', tSgr = [], tPosition = (1,1)}) True]
@@ -47,13 +48,16 @@ main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
   obstacles <- evalRandIO generateObstacles
   setTitle gameTitle
-  gameLoop (World (0,0) obstacles)
+  gameLoop (initialWorld obstacles)
 
 renderWorld :: World -> [Tile]
-renderWorld w = [renderHero (wHero w)] ++ map renderObstacle (wObstacles w)
+renderWorld w = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+
+renderExit :: Coord -> Tile
+renderExit c = Tile { tCharacter = '>', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
@@ -74,26 +78,26 @@ drawTile t = do
   liftIO $ putStr [tCharacter t]
 
 drawHero :: MonadIO m => Coord -> m ()
-drawHero c = drawTile $ Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c}
+drawHero c = drawTile $ Tile {
+    tCharacter = '@'
+  , tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ]
+  , tPosition = c
+  }
 
--- receive a character and return our Input data structure,
--- recursing on invalid input
 getInput :: MonadIO m => m Input
 getInput = do
   char <- liftIO getChar
   case char of
     'q' -> return Exit
-    'w' -> return Up
-    's' -> return Down
-    'a' -> return Left
-    'd' -> return Right
+    'k' -> return Up
+    'j' -> return Down
+    'h' -> return Left
+    'l' -> return Right
     _ -> getInput
 
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
 obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
 
--- given a world and a direction, 'adjust' the hero's position, and loop
--- with our updated hero
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
   where oldCoord@(heroX,heroY) = wHero w
