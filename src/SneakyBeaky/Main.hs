@@ -38,8 +38,21 @@ data Input = Up
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: [ObstacleTile] -> World
-initialWorld obstacles = World (0,0) obstacles (10,10)
+initialWorld :: [ObstacleTile] -> Coord -> World
+initialWorld obstacles exit = World (0,0) obstacles exit
+
+randomViewportCoord :: RandomGen g => Coord -> Rand g Coord
+randomViewportCoord c = do
+  x <- getRandomR (0,(fst c))
+  y <- getRandomR (0,(snd c))
+  return (x,y)
+
+generateNoConflict :: RandomGen g => Coord -> [Coord] -> Rand g Coord
+generateNoConflict viewport xs = do
+  c <- randomViewportCoord viewport
+  if not (c `elem` xs)
+    then return c
+    else generateNoConflict viewport xs
 
 generateObstacles :: RandomGen g => Rand g [ObstacleTile]
 generateObstacles = return [ObstacleTile (Tile {tCharacter = '|', tSgr = [], tPosition = (1,1)}) True]
@@ -47,8 +60,9 @@ generateObstacles = return [ObstacleTile (Tile {tCharacter = '|', tSgr = [], tPo
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
   obstacles <- evalRandIO generateObstacles
+  exit <- evalRandIO (generateNoConflict (80,25) (map (tPosition . oTile) obstacles))
   setTitle gameTitle
-  gameLoop (initialWorld obstacles)
+  gameLoop (initialWorld obstacles exit)
 
 renderWorld :: World -> [Tile]
 renderWorld w = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
@@ -57,7 +71,13 @@ renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 
 renderExit :: Coord -> Tile
-renderExit c = Tile { tCharacter = '>', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+renderExit c = Tile {
+    tCharacter = '>'
+  , tSgr = [ SetConsoleIntensity BoldIntensity
+           , SetColor Foreground Vivid Blue
+           ]
+  , tPosition = c
+  }
 
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
@@ -80,7 +100,9 @@ drawTile t = do
 drawHero :: MonadIO m => Coord -> m ()
 drawHero c = drawTile $ Tile {
     tCharacter = '@'
-  , tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ]
+  , tSgr = [ SetConsoleIntensity BoldIntensity
+           , SetColor Foreground Vivid Blue
+           ]
   , tPosition = c
   }
 
