@@ -40,12 +40,47 @@ gameTitle = "sneakybeaky"
 initialWorld :: World
 initialWorld = World (0,0) []
 
-generateObstacles :: RandomGen g => Rand g [ObstacleTile]
-generateObstacles = return [ObstacleTile (Tile {tCharacter = '|', tSgr = [], tPosition = (1,1)}) True]
+-- | See <http://roguebasin.roguelikedevelopment.org/index.php/Digital_lines>.
+balancedWord :: Int -> Int -> Int -> [Int]
+balancedWord p q eps | eps + p < q = 0 : balancedWord p q (eps + p)
+balancedWord p q eps               = 1 : balancedWord p q (eps + p - q)
+ 
+-- | Bresenham's line algorithm.
+-- Includes the first point and goes through the second to infinity.
+line :: Coord -> Coord -> [Coord]
+line (x0, y0) (x1, y1) =
+  let (dx, dy) = (x1 - x0, y1 - y0)
+      xyStep b (x, y) = (x + signum dx,     y + signum dy * b)
+      yxStep b (x, y) = (x + signum dx * b, y + signum dy)
+      (p, q, step) | abs dx > abs dy = (abs dy, abs dx, xyStep)
+                   | otherwise       = (abs dx, abs dy, yxStep)
+      walk w xy = xy : walk (tail w) (step (head w) xy)
+  in  walk (balancedWord p q 0) (x0, y0)
+
+obstacleFromCoord :: Coord -> ObstacleTile
+obstacleFromCoord pos = ObstacleTile (Tile pos '#' []) True
+
+generateObstacles :: RandomGen g => Coord -> Rand g [ObstacleTile]
+generateObstacles dim = do
+  let w = fst dim
+      h = snd dim
+  x1 <- getRandomR (0,w-1)
+  let x2 = min (w - 1) (x1 + 10)
+  y1 <- getRandomR (0,h-1)
+  let y2 = min (h - 1) (y1 + 10)
+  let p1 = (x1, y1)
+      p2 = (x2, y2)
+      p3 = (x1, y2)
+      p4 = (x2, y2)
+  return $ map obstacleFromCoord $ concat [
+    take 10 $ line p1 p2,
+    take 10 $ line p1 p3,
+    take 10 $ line p2 p4,
+    take 10 $ line p3 p4]
 
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
-  obstacles <- evalRandIO generateObstacles
+  obstacles <- evalRandIO $ generateObstacles (80,25)
   setTitle gameTitle
   gameLoop (World (0,0) obstacles)
 
