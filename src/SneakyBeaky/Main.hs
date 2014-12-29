@@ -7,6 +7,7 @@ import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import System.Random
 import Control.Monad.Random
+import Data.List(find)
 
 type Coord = (Int, Int)
 
@@ -40,7 +41,7 @@ initialWorld :: World
 initialWorld = World (0,0) []
 
 generateObstacles :: RandomGen g => Rand g [ObstacleTile]
-generateObstacles = return []
+generateObstacles = return [ObstacleTile (Tile {tCharacter = '|', tSgr = [], tPosition = (1,1)}) True]
 
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
@@ -49,10 +50,13 @@ main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSe
   gameLoop (World (0,0) obstacles)
 
 renderWorld :: World -> [Tile]
-renderWorld w = [renderHero (wHero w)]
+renderWorld w = [renderHero (wHero w)] ++ map renderObstacle (wObstacles w)
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+
+renderObstacle :: ObstacleTile -> Tile
+renderObstacle = oTile
 
 gameLoop :: MonadIO m => World -> m ()
 gameLoop w = do
@@ -61,7 +65,7 @@ gameLoop w = do
   input <- getInput
   case input of
     Exit -> return ()
-    _    -> handleDir w input
+    _    -> gameLoop (handleDir w input)
 
 drawTile :: MonadIO m => Tile -> m ()
 drawTile t = do
@@ -85,13 +89,19 @@ getInput = do
     'd' -> return Right
     _ -> getInput
 
+obstacleAt :: World -> Coord -> Maybe ObstacleTile
+obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
+
 -- given a world and a direction, 'adjust' the hero's position, and loop
 -- with our updated hero
-handleDir :: MonadIO m => World -> Input -> m ()
-handleDir w input = gameLoop $ w { wHero = newCoord }
-  where (heroX,heroY) = wHero w
-        newCoord = case input of
+handleDir :: World -> Input -> World
+handleDir w input = w { wHero = newCoord }
+  where oldCoord@(heroX,heroY) = wHero w
+        newCoord' = case input of
                     Up    -> (heroX, heroY - 1)
                     Down  -> (heroX, heroY + 1)
                     Left  -> (heroX - 1, heroY)
                     Right -> (heroX + 1, heroY)
+        newCoord = case (obstacleAt w newCoord') of
+                    Nothing -> newCoord'
+                    Just _ -> oldCoord
