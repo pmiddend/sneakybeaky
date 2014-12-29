@@ -25,6 +25,7 @@ data ObstacleTile = ObstacleTile {
 data World = World {
     wHero :: Coord
   , wObstacles :: [ObstacleTile]
+  , wExit :: Coord
 }
 
 data Input = Up
@@ -37,14 +38,27 @@ data Input = Up
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: World
-initialWorld = World (0,0) []
+initialWorld :: [ObstacleTile] -> Coord -> World
+initialWorld obstacles exit = World (0,0) obstacles exit
+
+randomViewportCoord :: RandomGen g => Coord -> Rand g Coord
+randomViewportCoord c = do
+  x <- getRandomR (0,(fst c))
+  y <- getRandomR (0,(snd c))
+  return (x,y)
+
+generateNoConflict :: RandomGen g => Coord -> [Coord] -> Rand g Coord
+generateNoConflict viewport xs = do
+  c <- randomViewportCoord viewport
+  if not (c `elem` xs)
+    then return c
+    else generateNoConflict viewport xs
 
 -- | See <http://roguebasin.roguelikedevelopment.org/index.php/Digital_lines>.
 balancedWord :: Int -> Int -> Int -> [Int]
 balancedWord p q eps | eps + p < q = 0 : balancedWord p q (eps + p)
 balancedWord p q eps               = 1 : balancedWord p q (eps + p - q)
- 
+
 -- | Bresenham's line algorithm.
 -- Includes the first point and goes through the second to infinity.
 line :: Coord -> Coord -> [Coord]
@@ -83,15 +97,26 @@ generateObstacles dim = do
 
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
-  obstacles <- evalRandIO $ generateObstacles (80,25)
+  let standardViewport = (80,25)
+  obstacles <- evalRandIO $ generateObstacles standardViewport
+  exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
   setTitle gameTitle
-  gameLoop (World (0,0) obstacles)
+  gameLoop (initialWorld obstacles exit)
 
 renderWorld :: World -> [Tile]
-renderWorld w = [renderHero (wHero w)] ++ map renderObstacle (wObstacles w)
+renderWorld w = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+
+renderExit :: Coord -> Tile
+renderExit c = Tile {
+    tCharacter = '>'
+  , tSgr = [ SetConsoleIntensity BoldIntensity
+           , SetColor Foreground Vivid Blue
+           ]
+  , tPosition = c
+  }
 
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
@@ -112,26 +137,28 @@ drawTile t = do
   liftIO $ putStr [tCharacter t]
 
 drawHero :: MonadIO m => Coord -> m ()
-drawHero c = drawTile $ Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c}
+drawHero c = drawTile $ Tile {
+    tCharacter = '@'
+  , tSgr = [ SetConsoleIntensity BoldIntensity
+           , SetColor Foreground Vivid Blue
+           ]
+  , tPosition = c
+  }
 
--- receive a character and return our Input data structure,
--- recursing on invalid input
 getInput :: MonadIO m => m Input
 getInput = do
   char <- liftIO getChar
   case char of
     'q' -> return Exit
-    'w' -> return Up
-    's' -> return Down
-    'a' -> return Left
-    'd' -> return Right
+    'k' -> return Up
+    'j' -> return Down
+    'h' -> return Left
+    'l' -> return Right
     _ -> getInput
 
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
 obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
 
--- given a world and a direction, 'adjust' the hero's position, and loop
--- with our updated hero
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
   where oldCoord@(heroX,heroY) = wHero w
