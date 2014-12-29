@@ -8,6 +8,7 @@ import Control.Exception.Base(bracket_)
 import System.Random
 import Control.Monad.Random
 import Data.List(find)
+import Debug.Trace(trace)
 
 type Coord = (Int, Int)
 
@@ -22,10 +23,16 @@ data ObstacleTile = ObstacleTile {
   , oSolid :: Bool
   }
 
+data LightSource = LightSource {
+    lsPosition :: Coord
+  , lsRadius :: Int
+  }
+
 data World = World {
     wHero :: Coord
   , wObstacles :: [ObstacleTile]
   , wExit :: Coord
+  , wLightSources :: [LightSource]
 }
 
 data Input = Up
@@ -35,11 +42,25 @@ data Input = Up
            | Exit
            deriving (Eq)
 
+lightTiles :: LightSource -> [Coord]
+lightTiles ls = let (cx,cy) = lsPosition ls
+                    r = lsRadius ls
+                    ts = [(x,y) | x <- [cx-r..cx+r],y <- [cy-r..cy+r]]
+                in filter (\(x,y) -> (x-cx)*(x-cx) + (cy-y)*(cy-y) <= r) ts
+
+litTiles :: [LightSource] -> [Coord]
+litTiles = concatMap lightTiles
+
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: [ObstacleTile] -> Coord -> World
-initialWorld obstacles exit = World (0,0) obstacles exit
+initialWorld :: [ObstacleTile] -> [LightSource] -> Coord -> World
+initialWorld obstacles lightSources exit = World {
+    wHero = (0,0)
+  , wObstacles = obstacles
+  , wExit = exit
+  , wLightSources = lightSources
+  }
 
 randomViewportCoord :: RandomGen g => Coord -> Rand g Coord
 randomViewportCoord c = do
@@ -98,10 +119,16 @@ main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSe
   obstacles <- evalRandIO $ generateObstacles standardViewport
   exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
   setTitle gameTitle
-  gameLoop (initialWorld obstacles exit)
+  gameLoop (initialWorld obstacles [LightSource (10,10) 5] exit)
 
 renderWorld :: World -> [Tile]
-renderWorld w = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
+renderWorld w = let firstTiles = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
+                    lit = litTiles (wLightSources w)
+                    renderedLit = map renderLit (filter (\lite -> not (lite `elem` (map tPosition firstTiles))) lit)
+                in firstTiles ++ renderedLit
+
+renderLit :: Coord -> Tile
+renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity ], tPosition = c }
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
