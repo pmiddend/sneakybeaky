@@ -3,12 +3,14 @@ module Main where
 import Prelude hiding (Either(..))
 import System.Console.ANSI
 import System.IO
+import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import Control.Monad.Random
 import Data.List(find,nub)
 
 type Coord = (Int, Int)
+type Rect = (Coord, Coord)
 
 data Tile = Tile {
     tPosition :: Coord
@@ -79,10 +81,13 @@ balancedWord :: Int -> Int -> Int -> [Int]
 balancedWord p q eps | eps + p < q = 0 : balancedWord p q (eps + p)
 balancedWord p q eps               = 1 : balancedWord p q (eps + p - q)
 
+line :: Coord -> Coord -> [Coord]
+line start end = (takeWhile (/= end) $ line' start end) ++ [end]
+
 -- | Bresenham's line algorithm.
 -- Includes the first point and goes through the second to infinity.
-line :: Coord -> Coord -> [Coord]
-line (x0, y0) (x1, y1) =
+line' :: Coord -> Coord -> [Coord]
+line' (x0, y0) (x1, y1) =
   let (dx, dy) = (x1 - x0, y1 - y0)
       xyStep b (x, y) = (x + signum dx,     y + signum dy * b)
       yxStep b (x, y) = (x + signum dx * b, y + signum dy)
@@ -91,29 +96,29 @@ line (x0, y0) (x1, y1) =
       walk w xy = xy : walk (tail w) (step (head w) xy)
   in  walk (balancedWord p q 0) (x0, y0)
 
+insideBounds :: Rect -> Coord -> Bool
+insideBounds ((x0, y0), (x1, y1)) (x, y) =
+  x0 <= x && x <= x1 &&
+  y0 <= y && y <= y1
+
 obstacleFromCoord :: Coord -> ObstacleTile
 obstacleFromCoord pos = ObstacleTile (Tile pos '#' []) True
 
-generateObstacles :: MonadRandom m => Coord -> m [ObstacleTile]
-generateObstacles dim = do
+generateObstacle :: MonadRandom m => Coord -> m [ObstacleTile]
+generateObstacle dim = do
   let w = fst dim
       h = snd dim
-      boxSize = 10
-  x1 <- getRandomR (0,w-1)
-  let x2 = min (w - 1) (x1 + 5)
-  y1 <- getRandomR (0,h-1)
-  let y2 = min (h - 1) (y1 + boxSize)
-  let dx = x2 - x1 + 1
-      dy = y2 - y1 + 1
-      p1 = (x1, y1)
-      p2 = (x2, y1)
-      p3 = (x1, y2)
-      p4 = (x2, y2)
-  return $ map obstacleFromCoord $ nub $ concat [
-    take dx $ line p1 p2,
-    take dy $ line p1 p3,
-    take dy $ line p2 p4,
-    take dx $ line p3 p4]
+  x1 <- getRandomR (0, w-1)
+  y1 <- getRandomR (0, h-1)
+  let boxSize = 5
+      x2 = (x1 + boxSize)
+      y2 = (y1 + boxSize)
+  return $ map obstacleFromCoord $ filter (insideBounds ((0,0),dim)) $ nub $ 
+    [(x,y) | x <- [x1..x2], y <- [y1..y2]]
+
+generateObstacles :: MonadRandom m => Coord -> m [ObstacleTile]
+generateObstacles dim = liftM concat $ replicateM 10 $
+  generateObstacle dim
 
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
