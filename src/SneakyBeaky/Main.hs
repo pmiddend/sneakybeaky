@@ -5,7 +5,6 @@ import System.Console.ANSI
 import System.IO
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
-import System.Random
 import Control.Monad.Random
 import Data.List(find,nub)
 
@@ -62,13 +61,13 @@ initialWorld obstacles lightSources exit = World {
   , wLightSources = lightSources
   }
 
-randomViewportCoord :: RandomGen g => Coord -> Rand g Coord
+randomViewportCoord :: (MonadRandom m) => Coord -> m Coord
 randomViewportCoord c = do
   x <- getRandomR (0,(fst c))
   y <- getRandomR (0,(snd c))
   return (x,y)
 
-generateNoConflict :: RandomGen g => Coord -> [Coord] -> Rand g Coord
+generateNoConflict :: (MonadRandom m) => Coord -> [Coord] -> m Coord
 generateNoConflict viewport xs = do
   c <- randomViewportCoord viewport
   if not (c `elem` xs)
@@ -95,7 +94,7 @@ line (x0, y0) (x1, y1) =
 obstacleFromCoord :: Coord -> ObstacleTile
 obstacleFromCoord pos = ObstacleTile (Tile pos '#' []) True
 
-generateObstacles :: RandomGen g => Coord -> Rand g [ObstacleTile]
+generateObstacles :: MonadRandom m => Coord -> m [ObstacleTile]
 generateObstacles dim = do
   let w = fst dim
       h = snd dim
@@ -156,7 +155,7 @@ renderGame w = do
 gameLoop :: MonadIO m => World -> m ()
 gameLoop w = do
   renderGame w
-  if wHero w == wExit w then liftIO (putStrLn "You won!") >> return () else do
+  if wHero w == wExit w then liftIO (putStrLn "You won!") else do
     input <- getInput
     case input of
       Exit -> return ()
