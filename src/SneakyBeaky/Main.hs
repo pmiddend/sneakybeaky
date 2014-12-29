@@ -7,7 +7,7 @@ import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import System.Random
 import Control.Monad.Random
-import Data.List(find)
+import Data.List(find,nub)
 
 type Coord = (Int, Int)
 
@@ -83,13 +83,13 @@ generateObstacles dim = do
   let x2 = min (w - 1) (x1 + 5)
   y1 <- getRandomR (0,h-1)
   let y2 = min (h - 1) (y1 + boxSize)
-  let dx = x2 - x1
-      dy = y2 - y1
+  let dx = x2 - x1 + 1
+      dy = y2 - y1 + 1
       p1 = (x1, y1)
       p2 = (x2, y1)
       p3 = (x1, y2)
       p4 = (x2, y2)
-  return $ map obstacleFromCoord $ concat [
+  return $ map obstacleFromCoord $ nub $ concat [
     take dx $ line p1 p2,
     take dy $ line p1 p3,
     take dy $ line p2 p4,
