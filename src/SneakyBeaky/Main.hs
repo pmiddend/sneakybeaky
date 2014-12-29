@@ -118,14 +118,19 @@ renderExit c = Tile {
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
 
-gameLoop :: MonadIO m => World -> m ()
-gameLoop w = do
+renderGame :: MonadIO m => World -> m ()
+renderGame w = do
   liftIO clearScreen
   mapM_ drawTile (renderWorld w)
-  input <- getInput
-  case input of
-    Exit -> return ()
-    _    -> gameLoop (handleDir w input)
+
+gameLoop :: MonadIO m => World -> m ()
+gameLoop w = do
+  renderGame w
+  if wHero w == wExit w then liftIO (putStrLn "You won!") >> return () else do
+    input <- getInput
+    case input of
+      Exit -> return ()
+      _    -> gameLoop (handleDir w input)
 
 drawTile :: MonadIO m => Tile -> m ()
 drawTile t = do
