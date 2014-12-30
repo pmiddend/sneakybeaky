@@ -7,7 +7,8 @@ import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import Control.Monad.Random
-import Data.List(find,nub)
+import Data.List(find,nub,(\\))
+import Data.Maybe(isNothing)
 
 type Coord = (Int, Int)
 type Rect = (Coord, Coord)
@@ -16,7 +17,7 @@ data Tile = Tile {
     tPosition :: Coord
   , tCharacter :: Char
   , tSgr :: [SGR]
-  }
+  } deriving(Eq)
 
 data ObstacleTile = ObstacleTile {
     oTile :: Tile
@@ -65,14 +66,14 @@ initialWorld obstacles lightSources exit = World {
 
 randomViewportCoord :: (MonadRandom m) => Coord -> m Coord
 randomViewportCoord c = do
-  x <- getRandomR (0,(fst c))
-  y <- getRandomR (0,(snd c))
+  x <- getRandomR (0,fst c)
+  y <- getRandomR (0,snd c)
   return (x,y)
 
 generateNoConflict :: (MonadRandom m) => Coord -> [Coord] -> m Coord
 generateNoConflict viewport xs = do
   c <- randomViewportCoord viewport
-  if not (c `elem` xs)
+  if c `notElem` xs
     then return c
     else generateNoConflict viewport xs
 
@@ -113,7 +114,7 @@ generateObstacle dim = do
   let boxSize = 5
       x2 = (x1 + boxSize)
       y2 = (y1 + boxSize)
-  return $ map obstacleFromCoord $ filter (insideBounds ((0,0),dim)) $ nub $ 
+  return $ map obstacleFromCoord $ filter (insideBounds ((0,0),dim)) $ nub $
     [(x,y) | x <- [x1..x2], y <- [y1..y2]]
 
 generateObstacles :: MonadRandom m => Coord -> m [ObstacleTile]
@@ -126,13 +127,34 @@ main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSe
   obstacles <- evalRandIO $ generateObstacles standardViewport
   exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
   setTitle gameTitle
-  gameLoop (initialWorld obstacles [LightSource (10,10) 5] exit)
+  liftIO clearScreen
+  gameLoop [] (initialWorld obstacles [LightSource (10,10) 200] exit)
+
+safeHead :: [a] -> Maybe a
+safeHead (x:_) = Just x
+safeHead _ = Nothing
+
+insideLight :: Coord -> LightSource -> Bool
+insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
+
+viewObstructed :: [Coord] -> LightSource -> Coord -> Maybe Coord
+viewObstructed obstacles light x = find (`elem` obstacles) (line (lsPosition light) x)
+
+tileDiff :: MonadIO m => [Tile] -> [Tile] -> m ()
+tileDiff before after = do
+  let toClear = before \\ after
+      toAdd = after \\ before
+  mapM_ clearTile toClear
+  mapM_ drawTile toAdd
 
 renderWorld :: World -> [Tile]
-renderWorld w = let firstTiles = [renderHero (wHero w),renderExit (wExit w)] ++ map renderObstacle (wObstacles w)
+renderWorld w = let obstacleTiles = map renderObstacle (wObstacles w)
+                    realTiles = [renderHero (wHero w),renderExit (wExit w)] ++ obstacleTiles
                     lit = litTiles (wLightSources w)
-                    renderedLit = map renderLit (filter (\lite -> not (lite `elem` (map tPosition firstTiles))) lit)
-                in firstTiles ++ renderedLit
+                    litFilter lite = lite `notElem` map tPosition realTiles &&
+                                     isNothing (viewObstructed (map tPosition obstacleTiles) (head (wLightSources w)) lite)
+                    renderedLit = map renderLit . filter litFilter $ lit
+                in realTiles ++ renderedLit
 
 renderLit :: Coord -> Tile
 renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity ], tPosition = c }
@@ -157,14 +179,16 @@ renderGame w = do
   liftIO clearScreen
   mapM_ drawTile (renderWorld w)
 
-gameLoop :: MonadIO m => World -> m ()
-gameLoop w = do
-  renderGame w
+gameLoop :: MonadIO m => [Tile] -> World -> m ()
+gameLoop prevTiles w = do
+  let thisTiles = renderWorld w
+  tileDiff prevTiles thisTiles
+  --mapM_ drawTile thisTiles
   if wHero w == wExit w then liftIO (putStrLn "You won!") else do
     input <- getInput
     case input of
       Exit -> return ()
-      _    -> gameLoop (handleDir w input)
+      _    -> gameLoop thisTiles (handleDir w input)
 
 drawTile :: MonadIO m => Tile -> m ()
 drawTile t = do
@@ -172,8 +196,13 @@ drawTile t = do
   liftIO $ setSGR (tSgr t)
   liftIO $ putStr [tCharacter t]
 
+clearTile :: MonadIO m => Tile -> m ()
+clearTile t = do
+  liftIO $ setCursorPosition (snd (tPosition t)) (fst (tPosition t))
+  liftIO $ putStr " "
+
 drawHero :: MonadIO m => Coord -> m ()
-drawHero c = drawTile $ Tile {
+drawHero c = drawTile Tile {
     tCharacter = '@'
   , tSgr = [ SetConsoleIntensity BoldIntensity
            , SetColor Foreground Vivid Blue
@@ -205,6 +234,6 @@ handleDir w input = w { wHero = newCoord }
                     Left  -> (heroX - 1, heroY)
                     Right -> (heroX + 1, heroY)
                     _ -> oldCoord
-        newCoord = case (obstacleAt w newCoord') of
+        newCoord = case obstacleAt w newCoord' of
                     Nothing -> newCoord'
                     Just _ -> oldCoord
