@@ -157,7 +157,7 @@ renderWorld w = let obstacleTiles = map renderObstacle (wObstacles w)
                 in realTiles ++ renderedLit
 
 renderLit :: Coord -> Tile
-renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity ], tPosition = c }
+renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid White ], tPosition = c }
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
@@ -199,6 +199,7 @@ drawTile t = do
 clearTile :: MonadIO m => Tile -> m ()
 clearTile t = do
   liftIO $ setCursorPosition (snd (tPosition t)) (fst (tPosition t))
+  liftIO $ setSGR [SetConsoleIntensity NormalIntensity,SetColor Foreground Vivid White]
   liftIO $ putStr " "
 
 drawHero :: MonadIO m => Coord -> m ()
