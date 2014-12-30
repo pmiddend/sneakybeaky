@@ -138,8 +138,11 @@ generateObstacle bounds = do
   let boxSize = 4
       x2 = (x1 + boxSize)
       y2 = (y1 + boxSize)
-  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ nub $
-    [(x,y) | x <- [x1..x2], y <- [y1..y2]]
+      obstacles = nub $ concat [
+        line (x1, y1) (x2, y1),
+        line (x1, y1) (x1, y2),
+        line (x2, y1) (x1, y2)]
+  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ (Set.toList $ floodFill ((x1, y1) `pairPlus` (1,1)) (Set.fromList obstacles))
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacles bounds = liftM concat $ replicateM 10 $
