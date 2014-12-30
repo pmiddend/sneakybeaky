@@ -42,6 +42,10 @@ data Input = Up
            | Right
            | Stand
            | Exit
+           | UpLeft
+           | UpRight
+           | DownLeft
+           | DownRight
            deriving (Eq)
 
 lightTiles :: LightSource -> [Coord]
@@ -221,6 +225,10 @@ getInput = do
     'h' -> return Left
     '.' -> return Stand
     'l' -> return Right
+    'y' -> return UpLeft
+    'u' -> return UpRight
+    'b' -> return DownLeft
+    'n' -> return DownRight
     _ -> getInput
 
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
@@ -234,6 +242,10 @@ handleDir w input = w { wHero = newCoord }
                     Down  -> (heroX, heroY + 1)
                     Left  -> (heroX - 1, heroY)
                     Right -> (heroX + 1, heroY)
+                    UpLeft    -> (heroX - 1, heroY - 1)
+                    UpRight    -> (heroX + 1, heroY - 1)
+                    DownLeft  -> (heroX - 1, heroY + 1)
+                    DownRight -> (heroX + 1, heroY + 1)
                     _ -> oldCoord
         newCoord = case obstacleAt w newCoord' of
                     Nothing -> newCoord'
