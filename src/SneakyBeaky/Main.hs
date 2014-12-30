@@ -15,6 +15,7 @@ import qualified Data.HashMap.Strict as Map
 import Data.Maybe(isNothing)
 import SneakyBeaky.Coord
 import SneakyBeaky.Rect
+import SneakyBeaky.Matrix
 
 type CoordSet = Set.HashSet Coord
 
@@ -135,17 +136,21 @@ generateObstacle bounds = do
       (left, top) = rTopLeft bounds
   x1 <- getRandomR (left, w-1)
   y1 <- getRandomR (top, h-1)
-  let boxSize = 4
+  let boxSize = 10
       x2 = (x1 + boxSize)
       y2 = (y1 + boxSize)
+      p1 = (x1, y1)
+      transform = (`pairPlus` p1) . (mMultiply (mRotationMatrix (45*pi/180))) . (`pairMinus` p1)
+      p2 = transform (x2, y1)
+      p3 = transform (x1, y2)
       obstacles = nub $ concat [
-        line (x1, y1) (x2, y1),
-        line (x1, y1) (x1, y2),
-        line (x2, y1) (x1, y2)]
-  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ (Set.toList $ floodFill ((x1, y1) `pairPlus` (1,1)) (Set.fromList obstacles))
+        line p1 p2,
+        line p1 p3,
+        line p2 p3]
+  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ {-(Set.toList $ floodFill ((x1, y1) `pairPlus` (1,1)) (Set.fromList obstacles)) -} obstacles
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
-generateObstacles bounds = liftM concat $ replicateM 10 $
+generateObstacles bounds = liftM concat $ replicateM 5 $
   generateObstacle bounds
 
 main :: IO ()
