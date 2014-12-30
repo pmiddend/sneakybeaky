@@ -6,16 +6,17 @@ import System.IO
 import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
-import Data.Monoid((<>))
+import Data.Monoid((<>),mconcat)
 import Control.Monad.Random
 import Data.List(find,nub,(\\))
 import qualified Data.HashSet as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
 import Data.Maybe(isNothing)
+import SneakyBeaky.Coord
+import SneakyBeaky.Rect
 
-type Coord = (Int, Int)
-type Rect = (Coord, Coord)
+type CoordSet = Set.HashSet Coord
 
 data Tile = Tile {
     tPosition :: !Coord
@@ -38,6 +39,7 @@ data World = World {
   , wObstacles :: ![ObstacleTile]
   , wExit :: !Coord
   , wLightSources :: ![LightSource]
+  , wViewport :: !Rect
   }
 
 data Input = Up
@@ -52,33 +54,36 @@ data Input = Up
            | DownRight
            deriving (Eq)
 
-lightTiles :: LightSource -> Set.HashSet Coord
+lightTiles :: LightSource -> CoordSet
 lightTiles ls = let (cx,cy) = lsPosition ls
                     r = lsRadius ls
                     ts = [(x,y) | x <- [cx-r..cx+r],y <- [cy-r..cy+r]]
                 in Set.fromList $ filter (\(x,y) -> (x-cx)*(x-cx) + (cy-y)*(cy-y) <= r) ts
 
-litTiles :: [LightSource] -> Set.HashSet Coord
+litTiles :: [LightSource] -> CoordSet
 litTiles = Set.unions . map lightTiles
 
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: [ObstacleTile] -> [LightSource] -> Coord -> World
-initialWorld obstacles lightSources exit = World {
+initialWorld :: [ObstacleTile] -> [LightSource] -> Coord -> Rect -> World
+initialWorld obstacles lightSources exit viewport = World {
     wHero = (0,0)
   , wObstacles = obstacles
   , wExit = exit
   , wLightSources = lightSources
+  , wViewport = viewport
   }
 
-randomViewportCoord :: (MonadRandom m) => Coord -> m Coord
+randomViewportCoord :: (MonadRandom m) => Rect -> m Coord
 randomViewportCoord c = do
-  x <- getRandomR (0,fst c)
-  y <- getRandomR (0,snd c)
+  let (x0, y0) = rTopLeft c
+      (x1, y1) = rBottomRight c
+  x <- getRandomR (x0, x1)
+  y <- getRandomR (y0, y1)
   return (x,y)
 
-generateNoConflict :: (MonadRandom m) => Coord -> [Coord] -> m Coord
+generateNoConflict :: (MonadRandom m) => Rect -> [Coord] -> m Coord
 generateNoConflict viewport xs = do
   c <- randomViewportCoord viewport
   if c `notElem` xs
@@ -105,38 +110,49 @@ line' (x0, y0) (x1, y1) =
       walk w xy = xy : walk (tail w) (step (head w) xy)
   in  walk (balancedWord p q 0) (x0, y0)
 
+clamp :: Ord a => (a, a) -> a -> a
+clamp (left, right) x =
+  min right (max left x)
+
+clampRect :: Rect -> Coord -> Coord
+clampRect bounds (x, y) =
+  let (x0, y0) = rTopLeft bounds
+      (x1, y1) = rBottomRight bounds
+  in (clamp (x0, x1) x, clamp (y0, y1) y)
+
 insideBounds :: Rect -> Coord -> Bool
-insideBounds ((x0, y0), (x1, y1)) (x, y) =
-  x0 <= x && x <= x1 &&
-  y0 <= y && y <= y1
+insideBounds bounds (x, y) =
+  let (x0, y0) = rTopLeft bounds
+      (x1, y1) = rBottomRight bounds
+  in x0 <= x && x <= x1 && y0 <= y && y <= y1
 
 obstacleFromCoord :: Coord -> ObstacleTile
 obstacleFromCoord pos = ObstacleTile (Tile pos '#' []) True
 
-generateObstacle :: MonadRandom m => Coord -> m [ObstacleTile]
-generateObstacle dim = do
-  let w = fst dim
-      h = snd dim
-  x1 <- getRandomR (0, w-1)
-  y1 <- getRandomR (0, h-1)
-  let boxSize = 5
+generateObstacle :: MonadRandom m => Rect -> m [ObstacleTile]
+generateObstacle bounds = do
+  let (w, h) = rDim bounds
+      (left, top) = rTopLeft bounds
+  x1 <- getRandomR (left, w-1)
+  y1 <- getRandomR (top, h-1)
+  let boxSize = 4
       x2 = (x1 + boxSize)
       y2 = (y1 + boxSize)
-  return $ map obstacleFromCoord $ filter (insideBounds ((0,0),dim)) $ nub $
+  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ nub $
     [(x,y) | x <- [x1..x2], y <- [y1..y2]]
 
-generateObstacles :: MonadRandom m => Coord -> m [ObstacleTile]
-generateObstacles dim = liftM concat $ replicateM 10 $
-  generateObstacle dim
+generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
+generateObstacles bounds = liftM concat $ replicateM 10 $
+  generateObstacle bounds
 
 main :: IO ()
 main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
-  let standardViewport = (80,25)
+  let standardViewport = mkRectPosDim (0,0) (80,25)
   obstacles <- evalRandIO $ generateObstacles standardViewport
   exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
   setTitle gameTitle
   liftIO clearScreen
-  gameLoop [] (initialWorld obstacles [LightSource (10,10) 200] exit)
+  gameLoop [] (initialWorld obstacles [LightSource (10,10) 200] exit standardViewport)
 
 safeHead :: [a] -> Maybe a
 safeHead (x:_) = Just x
@@ -243,7 +259,7 @@ obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
   where oldCoord@(heroX,heroY) = wHero w
-        newCoord' = case input of
+        newCoord' = clampRect (wViewport w) $ case input of
                     Up    -> (heroX, heroY - 1)
                     Down  -> (heroX, heroY + 1)
                     Left  -> (heroX - 1, heroY)
@@ -256,3 +272,8 @@ handleDir w input = w { wHero = newCoord }
         newCoord = case obstacleAt w newCoord' of
                     Nothing -> newCoord'
                     Just _ -> oldCoord
+
+floodFill :: Coord -> CoordSet -> CoordSet
+floodFill start obstacles | start `Set.member` obstacles  = obstacles
+                          | otherwise = mconcat $ map step [(0, 1),(1, 0),(-1, 0),(0, -1)]
+                          where step c = floodFill (start `pairPlus` c) (Set.insert start obstacles)
