@@ -136,17 +136,25 @@ generateObstacle bounds = do
       (left, top) = rTopLeft bounds
   x1 <- getRandomR (left, w-1)
   y1 <- getRandomR (top, h-1)
-  let boxSize = 10
-      x2 = (x1 + boxSize)
-      y2 = (y1 + boxSize)
+  let boxSize = 5
+      x2 = x1 + boxSize
+      y2 = y1 + boxSize
       p1 = (x1, y1)
-      transform = (`pairPlus` p1) . (mMultiply (mRotationMatrix (45*pi/180))) . (`pairMinus` p1)
-      p2 = transform (x2, y1)
-      p3 = transform (x1, y2)
+      p2 = (x2, y1)
+      p3 = (x1, y2)
+      p4 = (x2, y2)
+      center = cog [p1, p2, p3, p4]
+      angle = pi / 4
+      transform = (`pairPlus` center) . (mMultiply (mRotationMatrix angle)) . (`pairMinus` center)
+      q1 = transform p1
+      q2 = transform p2
+      q3 = transform p3
+      q4 = transform p4
       obstacles = nub $ concat [
-        line p1 p2,
-        line p1 p3,
-        line p2 p3]
+        line q1 q2,
+        line q1 q3,
+        line q2 q4,
+        line q3 q4]
   return $ map obstacleFromCoord $ filter (insideBounds bounds) $ {-(Set.toList $ floodFill ((x1, y1) `pairPlus` (1,1)) (Set.fromList obstacles)) -} obstacles
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
