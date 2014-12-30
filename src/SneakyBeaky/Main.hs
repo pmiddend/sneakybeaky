@@ -6,35 +6,39 @@ import System.IO
 import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
+import Data.Monoid((<>))
 import Control.Monad.Random
 import Data.List(find,nub,(\\))
+import qualified Data.HashSet as Set
+--import qualified Data.Set as Set
+import qualified Data.HashMap.Strict as Map
 import Data.Maybe(isNothing)
 
 type Coord = (Int, Int)
 type Rect = (Coord, Coord)
 
 data Tile = Tile {
-    tPosition :: Coord
-  , tCharacter :: Char
-  , tSgr :: [SGR]
+    tPosition :: !Coord
+  , tCharacter :: !Char
+  , tSgr :: ![SGR]
   } deriving(Eq)
 
 data ObstacleTile = ObstacleTile {
-    oTile :: Tile
-  , oSolid :: Bool
+    oTile :: !Tile
+  , oSolid :: !Bool
   }
 
 data LightSource = LightSource {
-    lsPosition :: Coord
-  , lsRadius :: Int
+    lsPosition :: !Coord
+  , lsRadius :: !Int
   }
 
 data World = World {
-    wHero :: Coord
-  , wObstacles :: [ObstacleTile]
-  , wExit :: Coord
-  , wLightSources :: [LightSource]
-}
+    wHero :: !Coord
+  , wObstacles :: ![ObstacleTile]
+  , wExit :: !Coord
+  , wLightSources :: ![LightSource]
+  }
 
 data Input = Up
            | Down
@@ -48,14 +52,14 @@ data Input = Up
            | DownRight
            deriving (Eq)
 
-lightTiles :: LightSource -> [Coord]
+lightTiles :: LightSource -> Set.HashSet Coord
 lightTiles ls = let (cx,cy) = lsPosition ls
                     r = lsRadius ls
                     ts = [(x,y) | x <- [cx-r..cx+r],y <- [cy-r..cy+r]]
-                in filter (\(x,y) -> (x-cx)*(x-cx) + (cy-y)*(cy-y) <= r) ts
+                in Set.fromList $ filter (\(x,y) -> (x-cx)*(x-cx) + (cy-y)*(cy-y) <= r) ts
 
-litTiles :: [LightSource] -> [Coord]
-litTiles = concatMap lightTiles
+litTiles :: [LightSource] -> Set.HashSet Coord
+litTiles = Set.unions . map lightTiles
 
 gameTitle :: String
 gameTitle = "sneakybeaky"
@@ -141,8 +145,8 @@ safeHead _ = Nothing
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
 
-viewObstructed :: [Coord] -> LightSource -> Coord -> Maybe Coord
-viewObstructed obstacles light x = find (`elem` obstacles) (line (lsPosition light) x)
+viewObstructed :: Map.HashMap Coord Tile -> LightSource -> Coord -> Maybe Coord
+viewObstructed obstacles light x = find (`Map.member` obstacles) (line (lsPosition light) x)
 
 tileDiff :: MonadIO m => [Tile] -> [Tile] -> m ()
 tileDiff before after = do
@@ -151,14 +155,21 @@ tileDiff before after = do
   mapM_ clearTile toClear
   mapM_ drawTile toAdd
 
+tileToAssoc :: Tile -> (Coord,Tile)
+tileToAssoc t = (tPosition t,t)
+
 renderWorld :: World -> [Tile]
-renderWorld w = let obstacleTiles = map renderObstacle (wObstacles w)
-                    realTiles = [renderHero (wHero w),renderExit (wExit w)] ++ obstacleTiles
+renderWorld w = let obstacleTiles = Map.fromList $ map (tileToAssoc . renderObstacle) (wObstacles w)
+                    realTiles = obstacleTiles <> (Map.fromList $ map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
                     lit = litTiles (wLightSources w)
-                    litFilter lite = lite `notElem` map tPosition realTiles &&
-                                     isNothing (viewObstructed (map tPosition obstacleTiles) (head (wLightSources w)) lite)
-                    renderedLit = map renderLit . filter litFilter $ lit
-                in realTiles ++ renderedLit
+                    --tilePositions = (Set.fromList . map tPosition) realTiles
+                    --obstaclePositions = (Set.fromList . map tPosition) obstacleTiles
+                    --litFilter lite = lite `Map.member` realTiles
+                    litFilter lite = isNothing (viewObstructed obstacleTiles (head (wLightSources w)) lite)
+                    --litFilter = const True
+                    renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . filter litFilter . Set.toList) lit
+                    --renderedLit = []
+                in (map snd . Map.toList) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
 renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid White ], tPosition = c }
@@ -177,11 +188,6 @@ renderExit c = Tile {
 
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
-
-renderGame :: MonadIO m => World -> m ()
-renderGame w = do
-  liftIO clearScreen
-  mapM_ drawTile (renderWorld w)
 
 gameLoop :: MonadIO m => [Tile] -> World -> m ()
 gameLoop prevTiles w = do
