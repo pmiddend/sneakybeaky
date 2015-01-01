@@ -4,13 +4,15 @@ import Prelude hiding (Either(..),putStr,putStrLn,getChar)
 import Control.Applicative((<|>),(<$>))
 import System.Console.ANSI(SGR(..),Color(..),ColorIntensity(..),ConsoleLayer(..),ConsoleIntensity(..))
 import System.IO hiding (putStr,putStrLn,getChar)
-import Control.Monad.IO.Class(MonadIO)
+import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import Data.Monoid((<>))
 import Data.Maybe(isJust,isNothing)
 import Control.Monad.Random
 import Data.List(find,(\\))
-import qualified Data.HashSet as Set
+import Debug.Trace
+import Data.Graph.AStar(aStar)
+import qualified Data.Set as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
 import SneakyBeaky.Coord
@@ -146,11 +148,29 @@ renderExit c = Tile {
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
 
+moore :: Coord -> Set.Set Coord
+moore (x,y) = Set.fromList [(x-1,y-1),(x,y-1),(x+1,y-1),(x-1,y),(x+1,y),(x-1,y+1),(x,y+1),(x+1,y+1)]
+
+calculateOptimalPath :: World -> Maybe [Coord]
+calculateOptimalPath w = aStar neighbors distance heuristic isGoal (wHero w)
+  where obstacles = obstaclesAsSet w
+        neighbors c = moore c `Set.difference` obstacles
+        distance x y | x == y = 0
+                     | otherwise = 1
+        heuristic (x,y) = (x-fst goal)*(x-fst goal)+(y-snd goal)*(y-snd goal)
+        isGoal c = c == goal
+        goal = (80,20)
+
+drawOptimalPath w = case calculateOptimalPath w of
+    Nothing -> putStrLn "Oh crap"
+--     Just p -> setCursorPosition (0,0) >> putStr ("|" <> (show . head) p <> "|")--mapM_ (drawTile . (\c -> Tile c 'P' [])) p
+    Just p -> mapM_ (drawTile . (\c -> Tile c 'P' [])) p
+
 gameLoop :: MonadIO m => [Tile] -> World -> m ()
 gameLoop prevTiles w = do
   let thisTiles = renderWorld (updateEnemyVisibility w)
   tileDiff prevTiles thisTiles
-  --mapM_ drawTile thisTiles
+  drawOptimalPath w
   if wHero w == wExit w then clearScreen >> setCursorPosition (0,0) >> putStrLn "You won!" else do
     input <- getInput
     case input of

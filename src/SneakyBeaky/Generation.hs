@@ -10,7 +10,7 @@ import Control.Exception.Base(bracket_)
 import Data.Monoid((<>),mconcat)
 import Control.Monad.Random
 import Data.List(find,nub,(\\))
-import qualified Data.HashSet as Set
+import qualified Data.Set as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
 import Data.Maybe(isNothing)
@@ -19,7 +19,7 @@ import SneakyBeaky.TileTypes
 import SneakyBeaky.Rect
 import SneakyBeaky.Matrix
 
-type CoordSet = Set.HashSet Coord
+type CoordSet = Set.Set Coord
 
 clamp :: Ord a => (a, a) -> a -> a
 clamp (left, right) x =
