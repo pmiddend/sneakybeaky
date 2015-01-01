@@ -60,7 +60,7 @@ initialWorld obstacles lightSources exit viewport = World {
   , wExit = exit
   , wLightSources = lightSources
   , wViewport = viewport
-  , wEnemies = [Enemy (Tile (5,5) 'E' []) False (1,0) 10 0 0]
+  , wEnemies = [Enemy (Tile (5,5) '0' []) False (1,0) 10 0 0 False]
   }
 
 initConsole :: IO ()
@@ -89,8 +89,8 @@ main = bracket_ initConsole deinitConsole $ do
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
 
-viewObstructed :: Map.HashMap Coord Tile -> Coord -> Coord -> Maybe Coord
-viewObstructed obstacles from to = find (`Map.member` obstacles) (line from to)
+viewObstructed :: CoordSet -> Coord -> Coord -> Maybe Coord
+viewObstructed obstacles from to = find (`Set.member` obstacles) (line from to)
 
 tileDiff :: MonadIO m => [Tile] -> [Tile] -> m ()
 tileDiff before after = do
@@ -105,16 +105,19 @@ tileToAssoc t = (tPosition t,t)
 obstacleTilesAsMap :: World -> Map.HashMap Coord Tile
 obstacleTilesAsMap w = Map.fromList $ map (tileToAssoc . renderObstacle) (wObstacles w)
 
+obstaclesAsSet :: World -> CoordSet
+obstaclesAsSet w = Set.fromList $ map (tPosition . oTile) (wObstacles w)
+
 litTiles :: World -> CoordSet
-litTiles w = let lights = [LightSource (wHero w) 100]{-(wLightSources w)-}
+litTiles w = let lights = wLightSources w
                  lit = lightTilesUnion lights
-                 obstacleTiles = obstacleTilesAsMap w
+                 obstacleTiles = obstaclesAsSet w
                  litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing lights)
              in Set.filter litFilter lit
 
 renderWorld :: World -> [Tile]
 renderWorld w = let obstacleTiles = obstacleTilesAsMap w
-                    enemyTiles = Map.fromList $ map (tileToAssoc . renderEnemy) (wEnemies w)
+                    enemyTiles = Map.fromList $ map tileToAssoc $ concatMap renderEnemy (wEnemies w)
                     realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
                     renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
                 in (map snd . Map.toList) (realTiles <> renderedLit)
@@ -122,8 +125,9 @@ renderWorld w = let obstacleTiles = obstacleTilesAsMap w
 renderLit :: Coord -> Tile
 renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 
-renderEnemy :: Enemy -> Tile
-renderEnemy = eTile
+renderEnemy :: Enemy -> [Tile]
+renderEnemy e | eVisible e = [eTile e]
+              | otherwise = []
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
@@ -142,7 +146,7 @@ renderObstacle = oTile
 
 gameLoop :: MonadIO m => [Tile] -> World -> m ()
 gameLoop prevTiles w = do
-  let thisTiles = renderWorld w
+  let thisTiles = renderWorld (updateEnemyVisibility w)
   tileDiff prevTiles thisTiles
   --mapM_ drawTile thisTiles
   if wHero w == wExit w then clearScreen >> putStrLn "You won!" else do
@@ -150,7 +154,6 @@ gameLoop prevTiles w = do
     case input of
       Exit -> return ()
       _    -> do
-        --let enemyResult = updateEnemies (handleDir w input)
         let enemyResult = updateEnemies w
         if uerGameOver enemyResult
            then clearScreen >> putStrLn "Game over!"
@@ -211,12 +214,21 @@ data UpdateEnemyResult = UpdateEnemyResult {
   , uerGameOver :: Bool
   }
 
+updateEnemyVisibility :: World -> World
+updateEnemyVisibility w = let lt = litTiles w
+                              os = obstaclesAsSet w
+                          in foldr (updateEnemyVisibility' lt os) w (wEnemies w)
+  where updateEnemyVisibility' lt os e w' = w' {
+          wEnemies = replaceBy (wEnemies w') ((== (tPosition . eTile) e). tPosition . eTile) (e { eVisible = isNothing (viewObstructed os (wHero w') (tPosition . eTile $ e))})
+          }
+
 updateEnemies :: World -> UpdateEnemyResult
 updateEnemies ow = let lt = litTiles ow
                    in foldr (updateEnemies' lt) (UpdateEnemyResult ow False) (wEnemies ow)
   where updateEnemies' lt e w = let uer = updateEnemy (uerWorld w) lt e
                                 in UpdateEnemyResult { uerWorld = uerWorld uer,uerGameOver = uerGameOver uer || uerGameOver w }
 
+maxFramesSeen :: Int
 maxFramesSeen = 3
 
 updateEnemy :: World -> CoordSet -> Enemy -> UpdateEnemyResult
@@ -230,7 +242,8 @@ updateEnemy w lt e =
                       then pairNegate (eWalkingDir e)
                       else eWalkingDir e
       newPosition = if isObstructed then oldPosition else newPosition'
-      newFramesSeen = eFramesSeen e + if wHero w `Set.member` lt && isNothing (viewObstructed (obstacleTilesAsMap w) (wHero w) newPosition) then 1 else 0
+      newVisible = isNothing (viewObstructed (obstaclesAsSet w) (wHero w) newPosition)
+      newFramesSeen = eFramesSeen e + if wHero w `Set.member` lt && newVisible then 1 else 0
       --newCharacter = tCharacter (eTile e)
       newAggro = newFramesSeen >= maxFramesSeen
       newCharacter = if newAggro then '!' else (head . show) newFramesSeen
@@ -238,7 +251,7 @@ updateEnemy w lt e =
       newCurrentWalk = if isAtTurningPoint
                        then 0
                        else eCurrentWalk e + 1
-      newEnemy = Enemy newTile newAggro newWalkingDir (eWalkingRadius e) newCurrentWalk newFramesSeen
+      newEnemy = Enemy newTile newAggro newWalkingDir (eWalkingRadius e) newCurrentWalk newFramesSeen newVisible
   in UpdateEnemyResult {
          uerWorld = w {
             wEnemies = replaceBy (wEnemies w) ((== (tPosition . eTile) e). tPosition . eTile) newEnemy

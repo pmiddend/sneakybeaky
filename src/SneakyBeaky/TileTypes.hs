@@ -26,4 +26,5 @@ data Enemy = Enemy {
   , eWalkingRadius :: !Int
   , eCurrentWalk :: !Int
   , eFramesSeen :: !Int
+  , eVisible :: !Bool
   }
