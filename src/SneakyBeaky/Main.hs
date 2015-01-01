@@ -63,12 +63,24 @@ initialWorld obstacles lightSources exit viewport = World {
   , wEnemies = [Enemy (Tile (5,5) 'E' []) False (1,0) 10 0 0]
   }
 
+initConsole :: IO ()
+initConsole = do
+  hSetEcho stdin False
+  hSetBuffering stdin NoBuffering
+  hSetBuffering stdout NoBuffering
+  hideCursor
+  setTitle gameTitle
+
+deinitConsole :: IO ()
+deinitConsole = do
+  showCursor
+  hSetEcho stdin True
+
 main :: IO ()
-main = bracket_ (hSetEcho stdin False >> hSetBuffering stdin  NoBuffering >> hSetBuffering stdout NoBuffering >> hideCursor) (showCursor >> hSetEcho stdin True) $ do
+main = bracket_ initConsole deinitConsole $ do
   let standardViewport = mkRectPosDim (0,0) (80,25)
   obstacles <- evalRandIO $ generateObstacles standardViewport
   exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
-  setTitle gameTitle
   clearScreen
   gameLoop [] (initialWorld obstacles [LightSource (10,10) 200] exit standardViewport)
 
