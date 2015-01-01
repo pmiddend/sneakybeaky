@@ -85,6 +85,8 @@ main = bracket_ initConsole deinitConsole $ do
   lightSourcePosition <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
   clearScreen
   gameLoop [] (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
+  _ <- getChar
+  return ()
 
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
@@ -120,7 +122,7 @@ renderWorld w = let obstacleTiles = obstacleTilesAsMap w
                     enemyTiles = Map.fromList $ map tileToAssoc $ concatMap renderEnemy (wEnemies w)
                     realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
                     renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
-                in (map snd . Map.toList) (realTiles <> renderedLit)
+                in (filter ((\(x,y) -> x >= 0 && y >= 0) . tPosition) . map snd . Map.toList) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
 renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
@@ -149,18 +151,18 @@ gameLoop prevTiles w = do
   let thisTiles = renderWorld (updateEnemyVisibility w)
   tileDiff prevTiles thisTiles
   --mapM_ drawTile thisTiles
-  if wHero w == wExit w then clearScreen >> putStrLn "You won!" else do
+  if wHero w == wExit w then clearScreen >> setCursorPosition (0,0) >> putStrLn "You won!" else do
     input <- getInput
     case input of
       Exit -> return ()
       _    -> do
         let enemyResult = updateEnemies w
         if uerGameOver enemyResult
-           then clearScreen >> putStrLn "Game over!"
+           then clearScreen >> setCursorPosition (0,0) >> putStrLn "Game over!"
            else do
              let inputResult = handleDir (uerWorld enemyResult) input
              if isJust (enemyAt inputResult (wHero w))
-                then clearScreen >> putStrLn "Game over!"
+                then clearScreen >> setCursorPosition (0,0) >> putStrLn "Game over!"
                 else gameLoop thisTiles inputResult
 
 drawTile :: MonadIO m => Tile -> m ()
@@ -215,10 +217,9 @@ data UpdateEnemyResult = UpdateEnemyResult {
   }
 
 updateEnemyVisibility :: World -> World
-updateEnemyVisibility w = let lt = litTiles w
-                              os = obstaclesAsSet w
-                          in foldr (updateEnemyVisibility' lt os) w (wEnemies w)
-  where updateEnemyVisibility' lt os e w' = w' {
+updateEnemyVisibility w = let os = obstaclesAsSet w
+                          in foldr (updateEnemyVisibility' os) w (wEnemies w)
+  where updateEnemyVisibility' os e w' = w' {
           wEnemies = replaceBy (wEnemies w') ((== (tPosition . eTile) e). tPosition . eTile) (e { eVisible = isNothing (viewObstructed os (wHero w') (tPosition . eTile $ e))})
           }
 
