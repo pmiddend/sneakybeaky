@@ -6,9 +6,9 @@ import System.IO
 import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
-import Data.Monoid((<>),mconcat)
+import Data.Monoid((<>))
 import Control.Monad.Random
-import Data.List(find,nub,(\\))
+import Data.List(find,(\\))
 import qualified Data.HashSet as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
@@ -19,7 +19,6 @@ import SneakyBeaky.Matrix
 import SneakyBeaky.TileTypes
 import SneakyBeaky.Generation
 
-type CoordSet = Set.HashSet Coord
 
 data World = World {
     wHero :: !Coord
@@ -190,8 +189,3 @@ handleDir w input = w { wHero = newCoord }
                      Nothing -> newCoord'
                      Just _ -> oldCoord
                    else oldCoord
-
-floodFill :: Coord -> CoordSet -> CoordSet
-floodFill start obstacles | start `Set.member` obstacles  = obstacles
-                          | otherwise = mconcat $ map step [(0, 1),(1, 0),(-1, 0),(0, -1)]
-                          where step c = floodFill (start `pairPlus` c) (Set.insert start obstacles)

@@ -19,6 +19,8 @@ import SneakyBeaky.TileTypes
 import SneakyBeaky.Rect
 import SneakyBeaky.Matrix
 
+type CoordSet = Set.HashSet Coord
+
 clamp :: Ord a => (a, a) -> a -> a
 clamp (left, right) x =
   min right (max left x)
@@ -101,3 +103,8 @@ generateObstacle bounds = do
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacles bounds = liftM concat $ replicateM 5 $
   generateObstacle bounds
+
+floodFill :: Coord -> CoordSet -> CoordSet
+floodFill start obstacles | start `Set.member` obstacles  = obstacles
+                          | otherwise = mconcat $ map step [(0, 1),(1, 0),(-1, 0),(0, -1)]
+                          where step c = floodFill (start `pairPlus` c) (Set.insert start obstacles)
