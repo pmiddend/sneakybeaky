@@ -106,9 +106,10 @@ obstacleTilesAsMap :: World -> Map.HashMap Coord Tile
 obstacleTilesAsMap w = Map.fromList $ map (tileToAssoc . renderObstacle) (wObstacles w)
 
 litTiles :: World -> CoordSet
-litTiles w = let lit = lightTilesUnion (wLightSources w)
+litTiles w = let lights = [LightSource (wHero w) 100]{-(wLightSources w)-}
+                 lit = lightTilesUnion lights
                  obstacleTiles = obstacleTilesAsMap w
-                 litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing (wLightSources w))
+                 litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing lights)
              in Set.filter litFilter lit
 
 renderWorld :: World -> [Tile]
