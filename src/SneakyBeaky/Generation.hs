@@ -90,16 +90,13 @@ generateObstacle bounds = do
       center = cog [p1, p2, p3, p4]
       angle = pi / 4
       transform = (`pairPlus` center) . (mMultiply (mRotationMatrix angle)) . (`pairMinus` center)
-      q1 = transform p1
-      q2 = transform p2
-      q3 = transform p3
-      q4 = transform p4
+      [q1, q2, q3, q4] = map transform [p1, p2, p3, p4]
       obstacles = nub $ concat [
         line q1 q2,
         line q1 q3,
         line q2 q4,
         line q3 q4]
-  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ {-(Set.toList $ floodFill ((x1, y1) `pairPlus` (1,1)) (Set.fromList obstacles)) -} obstacles
+  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ Set.toList $ floodFill center (Set.fromList obstacles)
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacles bounds = liftM concat $ replicateM 5 $

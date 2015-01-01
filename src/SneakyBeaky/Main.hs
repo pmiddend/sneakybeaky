@@ -105,7 +105,7 @@ renderWorld w = let obstacleTiles = Map.fromList $ map (tileToAssoc . renderObst
                 in (map snd . Map.toList) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
-renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid White ], tPosition = c }
+renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
@@ -176,7 +176,7 @@ obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
   where oldCoord@(heroX,heroY) = wHero w
-        newCoord' = clampRect (wViewport w) $ case input of
+        newCoord' = case input of
                     Up    -> (heroX, heroY - 1)
                     Down  -> (heroX, heroY + 1)
                     Left  -> (heroX - 1, heroY)
@@ -186,9 +186,10 @@ handleDir w input = w { wHero = newCoord }
                     DownLeft  -> (heroX - 1, heroY + 1)
                     DownRight -> (heroX + 1, heroY + 1)
                     _ -> oldCoord
-        newCoord = case obstacleAt w newCoord' of
-                    Nothing -> newCoord'
-                    Just _ -> oldCoord
+        newCoord = if (insideBounds (wViewport w) newCoord') then case obstacleAt w newCoord' of
+                     Nothing -> newCoord'
+                     Just _ -> oldCoord
+                   else oldCoord
 
 floodFill :: Coord -> CoordSet -> CoordSet
 floodFill start obstacles | start `Set.member` obstacles  = obstacles
