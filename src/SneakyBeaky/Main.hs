@@ -1,7 +1,7 @@
 module Main where
 
 import Prelude hiding (Either(..),putStr,putStrLn,getChar)
-import Control.Applicative((<|>))
+import Control.Applicative((<|>),(<$>))
 import System.Console.ANSI(SGR(..),Color(..),ColorIntensity(..),ConsoleLayer(..),ConsoleIntensity(..))
 import System.IO hiding (putStr,putStrLn,getChar)
 import Control.Monad.IO.Class(MonadIO)
@@ -47,8 +47,8 @@ lightTiles ls = let (cx,cy) = lsPosition ls
                     ts = [(x,y) | x <- [cx-r..cx+r],y <- [cy-r..cy+r]]
                 in Set.fromList $ filter (\(x,y) -> (x-cx)*(x-cx) + (cy-y)*(cy-y) <= r) ts
 
-litTiles :: [LightSource] -> CoordSet
-litTiles = Set.unions . map lightTiles
+lightTilesUnion :: [LightSource] -> CoordSet
+lightTilesUnion = Set.unions . map lightTiles
 
 gameTitle :: String
 gameTitle = "sneakybeaky"
@@ -80,9 +80,11 @@ main :: IO ()
 main = bracket_ initConsole deinitConsole $ do
   let standardViewport = mkRectPosDim (0,0) (80,25)
   obstacles <- evalRandIO $ generateObstacles standardViewport
-  exit <- evalRandIO (generateNoConflict standardViewport (map (tPosition . oTile) obstacles))
+  let obstaclePositions = (tPosition . oTile) <$> obstacles
+  exit <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
+  lightSourcePosition <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
   clearScreen
-  gameLoop [] (initialWorld obstacles [LightSource (10,10) 200] exit standardViewport)
+  gameLoop [] (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
 
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
@@ -103,18 +105,17 @@ tileToAssoc t = (tPosition t,t)
 obstacleTilesAsMap :: World -> Map.HashMap Coord Tile
 obstacleTilesAsMap w = Map.fromList $ map (tileToAssoc . renderObstacle) (wObstacles w)
 
+litTiles :: World -> CoordSet
+litTiles w = let lit = lightTilesUnion (wLightSources w)
+                 obstacleTiles = obstacleTilesAsMap w
+                 litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing (wLightSources w))
+             in Set.filter litFilter lit
+
 renderWorld :: World -> [Tile]
 renderWorld w = let obstacleTiles = obstacleTilesAsMap w
                     enemyTiles = Map.fromList $ map (tileToAssoc . renderEnemy) (wEnemies w)
                     realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
-                    lit = litTiles (wLightSources w)
-                    --tilePositions = (Set.fromList . map tPosition) realTiles
-                    --obstaclePositions = (Set.fromList . map tPosition) obstacleTiles
-                    --litFilter lite = lite `Map.member` realTiles
-                    litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing (wLightSources w))
-                    --litFilter = const True
-                    renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . filter litFilter . Set.toList) lit
-                    --renderedLit = []
+                    renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
                 in (map snd . Map.toList) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
@@ -210,12 +211,15 @@ data UpdateEnemyResult = UpdateEnemyResult {
   }
 
 updateEnemies :: World -> UpdateEnemyResult
-updateEnemies ow = foldr updateEnemies' (UpdateEnemyResult ow False) (wEnemies ow)
-  where updateEnemies' e w = let uer = updateEnemy (uerWorld w) e
-                             in UpdateEnemyResult { uerWorld = uerWorld uer,uerGameOver = uerGameOver uer || uerGameOver w }
+updateEnemies ow = let lt = litTiles ow
+                   in foldr (updateEnemies' lt) (UpdateEnemyResult ow False) (wEnemies ow)
+  where updateEnemies' lt e w = let uer = updateEnemy (uerWorld w) lt e
+                                in UpdateEnemyResult { uerWorld = uerWorld uer,uerGameOver = uerGameOver uer || uerGameOver w }
 
-updateEnemy :: World -> Enemy -> UpdateEnemyResult
-updateEnemy w e =
+maxFramesSeen = 3
+
+updateEnemy :: World -> CoordSet -> Enemy -> UpdateEnemyResult
+updateEnemy w lt e =
   let oldPosition = tPosition (eTile e)
       newPosition' = oldPosition `pairPlus` eWalkingDir e
       isAtTurningPoint = eCurrentWalk e + 1 == eWalkingRadius e
@@ -225,11 +229,11 @@ updateEnemy w e =
                       then pairNegate (eWalkingDir e)
                       else eWalkingDir e
       newPosition = if isObstructed then oldPosition else newPosition'
-      newFramesSeen = eFramesSeen e + if any (insideLight (wHero w)) (wLightSources w) && isNothing (viewObstructed (obstacleTilesAsMap w) (wHero w) newPosition) then 1 else 0
+      newFramesSeen = eFramesSeen e + if wHero w `Set.member` lt && isNothing (viewObstructed (obstacleTilesAsMap w) (wHero w) newPosition) then 1 else 0
       --newCharacter = tCharacter (eTile e)
-      newCharacter = (head . show) newFramesSeen
+      newAggro = newFramesSeen >= maxFramesSeen
+      newCharacter = if newAggro then '!' else (head . show) newFramesSeen
       newTile = (eTile e) { tPosition = newPosition,tCharacter = newCharacter }
-      newAggro = eAggro e
       newCurrentWalk = if isAtTurningPoint
                        then 0
                        else eCurrentWalk e + 1
