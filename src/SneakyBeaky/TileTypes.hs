@@ -18,3 +18,12 @@ data LightSource = LightSource {
     lsPosition :: !Coord
   , lsRadius :: !Int
   }
+
+data Enemy = Enemy {
+    eTile :: !Tile
+  , eAggro :: !Bool
+  , eWalkingDir :: !Coord
+  , eWalkingRadius :: !Int
+  , eCurrentWalk :: !Int
+  , eFramesSeen :: !Int
+  }

@@ -3,19 +3,17 @@ module Main where
 import Prelude hiding (Either(..))
 import System.Console.ANSI
 import System.IO
-import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
 import Control.Exception.Base(bracket_)
 import Data.Monoid((<>))
+import Data.Maybe(isJust,isNothing)
 import Control.Monad.Random
 import Data.List(find,(\\))
 import qualified Data.HashSet as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
-import Data.Maybe(isNothing)
 import SneakyBeaky.Coord
 import SneakyBeaky.Rect
-import SneakyBeaky.Matrix
 import SneakyBeaky.TileTypes
 import SneakyBeaky.Generation
 
@@ -23,6 +21,7 @@ import SneakyBeaky.Generation
 data World = World {
     wHero :: !Coord
   , wObstacles :: ![ObstacleTile]
+  , wEnemies :: ![Enemy]
   , wExit :: !Coord
   , wLightSources :: ![LightSource]
   , wViewport :: !Rect
@@ -59,6 +58,7 @@ initialWorld obstacles lightSources exit viewport = World {
   , wExit = exit
   , wLightSources = lightSources
   , wViewport = viewport
+  , wEnemies = [Enemy (Tile (5,5) 'E' []) False (1,0) 10 0 0]
   }
 
 main :: IO ()
@@ -92,7 +92,8 @@ tileToAssoc t = (tPosition t,t)
 
 renderWorld :: World -> [Tile]
 renderWorld w = let obstacleTiles = Map.fromList $ map (tileToAssoc . renderObstacle) (wObstacles w)
-                    realTiles = obstacleTiles <> (Map.fromList $ map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
+                    enemyTiles = Map.fromList $ map (tileToAssoc . renderEnemy) (wEnemies w)
+                    realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
                     lit = litTiles (wLightSources w)
                     --tilePositions = (Set.fromList . map tPosition) realTiles
                     --obstaclePositions = (Set.fromList . map tPosition) obstacleTiles
@@ -105,6 +106,9 @@ renderWorld w = let obstacleTiles = Map.fromList $ map (tileToAssoc . renderObst
 
 renderLit :: Coord -> Tile
 renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+
+renderEnemy :: Enemy -> Tile
+renderEnemy = eTile
 
 renderHero :: Coord -> Tile
 renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
@@ -126,11 +130,15 @@ gameLoop prevTiles w = do
   let thisTiles = renderWorld w
   tileDiff prevTiles thisTiles
   --mapM_ drawTile thisTiles
-  if wHero w == wExit w then liftIO (putStrLn "You won!") else do
+  if wHero w == wExit w then liftIO (clearScreen >> putStrLn "You won!") else do
     input <- getInput
     case input of
       Exit -> return ()
-      _    -> gameLoop thisTiles (handleDir w input)
+      _    -> do
+        let enemyResult = updateEnemies (handleDir w input)
+        if uerGameOver enemyResult
+           then liftIO (clearScreen >> putStrLn "Game over!")
+           else gameLoop thisTiles (uerWorld enemyResult)
 
 drawTile :: MonadIO m => Tile -> m ()
 drawTile t = do
@@ -172,6 +180,58 @@ getInput = do
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
 obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
 
+enemyAt :: World -> Coord -> Maybe Enemy
+enemyAt w c = find ((== c) . tPosition . eTile) (wEnemies w)
+
+playerAt :: World -> Coord -> Bool
+playerAt w c = wHero w == c
+
+replace :: Eq a => [a] -> a -> a ->[a]
+replace [] _ _ = []
+replace (x:xs) old new | x == old = new : replace xs old new
+                       | otherwise = x : replace xs old new
+
+replaceBy :: [a] -> (a -> Bool) -> a ->[a]
+replaceBy [] _ _ = []
+replaceBy (x:xs) f new | f x = new : replaceBy xs f new
+                       | otherwise = x : replaceBy xs f new
+
+data UpdateEnemyResult = UpdateEnemyResult {
+    uerWorld :: World
+  , uerGameOver :: Bool
+  }
+
+updateEnemies :: World -> UpdateEnemyResult
+updateEnemies ow = foldr updateEnemies' (UpdateEnemyResult ow False) (wEnemies ow)
+  where updateEnemies' e w = let uer = updateEnemy (uerWorld w) e
+                             in UpdateEnemyResult { uerWorld = uerWorld uer,uerGameOver = uerGameOver uer || uerGameOver w }
+
+updateEnemy :: World -> Enemy -> UpdateEnemyResult
+updateEnemy w e =
+  let oldPosition = tPosition (eTile e)
+      newPosition' = oldPosition `pairPlus` eWalkingDir e
+      isAtTurningPoint = eCurrentWalk e + 1 == eWalkingRadius e
+      isObstructed = isJust (obstacleAt w newPosition') || isJust (enemyAt w newPosition')
+      isTurning = isAtTurningPoint || isObstructed
+      newWalkingDir = if isTurning
+                      then pairNegate (eWalkingDir e)
+                      else eWalkingDir e
+      newPosition = if isObstructed then oldPosition else newPosition'
+      newCharacter = tCharacter (eTile e)
+      newTile = (eTile e) { tPosition = newPosition,tCharacter = newCharacter }
+      newAggro = eAggro e
+      newCurrentWalk = if isAtTurningPoint
+                       then 0
+                       else eCurrentWalk e + 1
+      newFramesSeen = eFramesSeen e
+      newEnemy = Enemy newTile newAggro newWalkingDir (eWalkingRadius e) newCurrentWalk newFramesSeen
+  in UpdateEnemyResult {
+         uerWorld = w {
+            wEnemies = replaceBy (wEnemies w) ((== (tPosition . eTile) e). tPosition . eTile) newEnemy
+            }
+       , uerGameOver = playerAt w newPosition
+       }
+
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
   where oldCoord@(heroX,heroY) = wHero w
@@ -185,7 +245,7 @@ handleDir w input = w { wHero = newCoord }
                     DownLeft  -> (heroX - 1, heroY + 1)
                     DownRight -> (heroX + 1, heroY + 1)
                     _ -> oldCoord
-        newCoord = if (insideBounds (wViewport w) newCoord') then case obstacleAt w newCoord' of
+        newCoord = if insideBounds (wViewport w) newCoord' then case obstacleAt w newCoord' of
                      Nothing -> newCoord'
                      Just _ -> oldCoord
                    else oldCoord
