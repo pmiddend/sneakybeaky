@@ -82,6 +82,7 @@ generateObstacle bounds = do
       (left, top) = rTopLeft bounds
   x1 <- getRandomR (left, w-1)
   y1 <- getRandomR (top, h-1)
+  angle <- getRandomR ((0,3) :: (Int, Int))
   let boxSize = 5
       x2 = x1 + boxSize
       y2 = y1 + boxSize
@@ -90,8 +91,7 @@ generateObstacle bounds = do
       p3 = (x1, y2)
       p4 = (x2, y2)
       center = cog [p1, p2, p3, p4]
-      angle = pi / 4
-      transform = (`pairPlus` center) . (mMultiply (mRotationMatrix angle)) . (`pairMinus` center)
+      transform = (`pairPlus` center) . (mMultiply (mRotationMatrix ((pi/8) * fromIntegral angle))) . (`pairMinus` center)
       [q1, q2, q3, q4] = map transform [p1, p2, p3, p4]
       obstacles = nub $ concat [
         line q1 q2,
@@ -101,7 +101,7 @@ generateObstacle bounds = do
   return $ map obstacleFromCoord $ filter (insideBounds bounds) $ Set.toList $ floodFill center (Set.fromList obstacles)
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
-generateObstacles bounds = liftM concat $ replicateM 5 $
+generateObstacles bounds = liftM concat $ replicateM 10 $
   generateObstacle bounds
 
 floodFill :: Coord -> CoordSet -> CoordSet
