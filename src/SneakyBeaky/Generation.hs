@@ -69,7 +69,7 @@ generateEnemy :: (Applicative m,MonadRandom m,Foldable t) => Rect -> t Coord -> 
 generateEnemy viewport obstacles = Enemy
                                <$> (Tile
                                <$> generateNoConflict viewport obstacles
-                                <*> randomListElement "PFN"
+                                <*> randomListElement "PFn"
                                 <*> pure (mkColorPair White Transparent))
                                <*> pure False
                                <*> randomListElement [(-1,-1),(-1,0),(-1,1),(-1,0),(1,0),(-1,1),(0,1),(1,1)]
@@ -92,7 +92,7 @@ generateStartAndExit viewport obstacles = do
   let restart = case calculateOptimalPath obstacles start end of
         Nothing -> True
         Just [] -> True
-        _ -> False
+        Just xs -> length xs < walkLengthThreshold viewport
   if not restart
     then return (start,end)
     else generateStartAndExit viewport obstacles

@@ -66,8 +66,8 @@ main = do
   run viewport $ do
       obstacles <- evalRandIO $ generateObstacles viewport
       let obstaclePositions = Set.fromList ((tPosition . oTile) <$> obstacles)
-      enemies <- evalRandIO $ replicateM 6 (generateEnemy viewport obstaclePositions)
-      lightSources <- evalRandIO (replicateM 10 (generateLightSource viewport obstaclePositions))
+      enemies <- evalRandIO $ replicateM 20 (generateEnemy viewport obstaclePositions)
+      lightSources <- evalRandIO (replicateM 12 (generateLightSource viewport obstaclePositions))
       (start,exit) <- evalRandIO (generateStartAndExit viewport obstaclePositions)
       let world = World {
               wHero = start
