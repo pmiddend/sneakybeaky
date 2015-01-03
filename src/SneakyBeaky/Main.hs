@@ -1,34 +1,36 @@
 module Main where
 
-import Prelude hiding (Either(..),putStr,putStrLn,getChar)
-import Control.Applicative((<|>),(<$>))
-import System.Console.ANSI(SGR(..),Color(..),ColorIntensity(..),ConsoleLayer(..),ConsoleIntensity(..))
-import System.IO hiding (putStr,putStrLn,getChar)
-import Control.Monad.IO.Class(MonadIO,liftIO)
-import Control.Exception.Base(bracket_)
-import Data.Monoid((<>))
-import Data.Maybe(isJust,isNothing)
-import Control.Monad.Random
-import Data.List(find,(\\))
-import Debug.Trace
-import Data.Graph.AStar(aStar)
-import qualified Data.Set as Set
+import           Control.Applicative    ((<$>), (<|>))
+import           Data.Graph.AStar       (aStar)
+import           Data.List              (find, (\\))
+import           Data.Maybe             (isJust, isNothing)
+import           Data.Monoid            ((<>))
+import qualified Data.Set               as Set
+import           Prelude                hiding (Either (..), getChar, putStr,
+                                         putStrLn)
 --import qualified Data.Set as Set
-import qualified Data.HashMap.Strict as Map
-import SneakyBeaky.Coord
-import SneakyBeaky.Rect
-import SneakyBeaky.TileTypes
-import SneakyBeaky.List
-import SneakyBeaky.Generation
-import SneakyBeaky.Terminal
+import qualified Data.HashMap.Strict    as Map
+import           SneakyBeaky.Coord
+import           SneakyBeaky.Generation
+import           SneakyBeaky.Lifted
+import           SneakyBeaky.List
+import           SneakyBeaky.Rect
+import           SneakyBeaky.TileTypes
+import qualified UI.NCurses             as C
 
 data World = World {
-    wHero :: !Coord
-  , wObstacles :: ![ObstacleTile]
-  , wEnemies :: ![Enemy]
-  , wExit :: !Coord
+    wHero         :: !Coord
+  , wObstacles    :: ![ObstacleTile]
+  , wEnemies      :: ![Enemy]
+  , wExit         :: !Coord
   , wLightSources :: ![LightSource]
-  , wViewport :: !Rect
+  , wViewport     :: !Rect
+  }
+
+data RenderData = RenderData {
+    rdPrevTiles :: [Tile]
+  , rdWindow    :: C.Window
+  , rdViewport  :: Rect
   }
 
 data Input = Up
@@ -62,33 +64,21 @@ initialWorld obstacles lightSources exit viewport = World {
   , wExit = exit
   , wLightSources = lightSources
   , wViewport = viewport
-  , wEnemies = [Enemy (Tile (5,5) '0' []) False (1,0) 10 0 0 False]
+  , wEnemies = [Enemy (Tile (5,5) '0' (SneakyColorPair White Transparent)) False (1,0) 10 0 0 False]
   }
 
-initConsole :: IO ()
-initConsole = do
-  hSetEcho stdin False
-  hSetBuffering stdin NoBuffering
-  hSetBuffering stdout NoBuffering
-  hideCursor
-  setTitle gameTitle
-
-deinitConsole :: IO ()
-deinitConsole = do
-  showCursor
-  hSetEcho stdin True
-
 main :: IO ()
-main = bracket_ initConsole deinitConsole $ do
+main = C.runCurses $ do
   let standardViewport = mkRectPosDim (0,0) (80,25)
+  C.setEcho False
+  w <- C.newWindow ((fromIntegral . snd . rDim) standardViewport) ((fromIntegral . fst . rDim) standardViewport) 0 0
+  _ <- C.setCursorMode C.CursorInvisible
   obstacles <- evalRandIO $ generateObstacles standardViewport
   let obstaclePositions = (tPosition . oTile) <$> obstacles
   exit <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
   lightSourcePosition <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
-  clearScreen
-  gameLoop [] (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
-  _ <- getChar
-  return ()
+--   gameLoop [] w (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
+  gameLoop (RenderData [] w standardViewport) (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
 
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
@@ -96,7 +86,12 @@ insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
 viewObstructed :: CoordSet -> Coord -> Coord -> Maybe Coord
 viewObstructed obstacles from to = find (`Set.member` obstacles) (line from to)
 
-tileDiff :: MonadIO m => [Tile] -> [Tile] -> m ()
+applyTileDiff :: RenderData -> [Tile] -> C.Curses RenderData
+applyTileDiff rd ts = do
+  C.updateWindow (rdWindow rd) $ tileDiff (rdPrevTiles rd) ts
+  return (rd {rdPrevTiles = ts})
+
+tileDiff :: [Tile] -> [Tile] -> C.Update ()
 tileDiff before after = do
   let toClear = before \\ after
       toAdd = after \\ before
@@ -119,30 +114,35 @@ litTiles w = let lights = wLightSources w
                  litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing lights)
              in Set.filter litFilter lit
 
-renderWorld :: World -> [Tile]
-renderWorld w = let obstacleTiles = obstacleTilesAsMap w
-                    enemyTiles = Map.fromList $ map tileToAssoc $ concatMap renderEnemy (wEnemies w)
-                    realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
-                    renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
-                in (filter ((\(x,y) -> x >= 0 && y >= 0) . tPosition) . map snd . Map.toList) (realTiles <> renderedLit)
+renderWorld :: World -> Rect -> [Tile]
+renderWorld w viewport =
+  let obstacleTiles = obstacleTilesAsMap w
+      enemyTiles = Map.fromList $ map tileToAssoc $ concatMap renderEnemy (wEnemies w)
+      realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
+      renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
+  in (filter (insideRect viewport . tPosition) . map snd . Map.toList) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
-renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+-- renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+-- renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+renderLit c = Tile { tCharacter = '.', tPosition = c,tColor = SneakyColorPair White Transparent }
 
 renderEnemy :: Enemy -> [Tile]
 renderEnemy e | eVisible e = [eTile e]
               | otherwise = []
 
 renderHero :: Coord -> Tile
-renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+-- renderHero c = Tile { tCharacter = '@', tSgr = [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
+renderHero c = Tile { tCharacter = '@', tPosition = c,tColor = SneakyColorPair White Transparent }
 
 renderExit :: Coord -> Tile
 renderExit c = Tile {
     tCharacter = '>'
-  , tSgr = [ SetConsoleIntensity BoldIntensity
-           , SetColor Foreground Vivid Blue
-           ]
+--   , tSgr = [ SetConsoleIntensity BoldIntensity
+--            , SetColor Foreground Vivid Blue
+--            ]
   , tPosition = c
+  , tColor = SneakyColorPair Blue Transparent
   }
 
 renderObstacle :: ObstacleTile -> Tile
@@ -161,54 +161,65 @@ calculateOptimalPath w = aStar neighbors distance heuristic isGoal (wHero w)
         isGoal c = c == goal
         goal = (80,20)
 
-drawOptimalPath w = case calculateOptimalPath w of
+{-drawOptimalPath w = case calculateOptimalPath w of
     Nothing -> putStrLn "Oh crap"
 --     Just p -> setCursorPosition (0,0) >> putStr ("|" <> (show . head) p <> "|")--mapM_ (drawTile . (\c -> Tile c 'P' [])) p
-    Just p -> mapM_ (drawTile . (\c -> Tile c 'P' [])) p
+    Just p -> mapM_ (drawTile . (\c -> Tile c 'P' [])) p-}
 
-gameLoop :: MonadIO m => [Tile] -> World -> m ()
-gameLoop prevTiles w = do
-  let thisTiles = renderWorld (updateEnemyVisibility w)
-  tileDiff prevTiles thisTiles
-  drawOptimalPath w
-  if wHero w == wExit w then clearScreen >> setCursorPosition (0,0) >> putStrLn "You won!" else do
-    input <- getInput
+clearScreen :: [Tile] -> C.Update ()
+clearScreen = mapM_ clearTile
+
+drawStringCentered :: RenderData -> String -> C.Update ()
+drawStringCentered rd s = clearScreen (rdPrevTiles rd) >> moveCursor (((\x -> x - length s).(`div`2). fst . rDim . rdViewport) rd,((`div`2). snd . rDim . rdViewport) rd) >> C.drawString s
+
+showMessageAndWait :: RenderData -> String -> C.Curses ()
+showMessageAndWait rd s = C.updateWindow (rdWindow rd) (drawStringCentered rd s) >> C.render >> getInput (rdWindow rd) >> return ()
+
+gameLoop :: RenderData -> World -> C.Curses ()
+gameLoop rd w =
+  if wHero w == wExit w then showMessageAndWait rd "You won!" else do
+    newRd <- applyTileDiff rd (renderWorld (updateEnemyVisibility w) (rdViewport rd))
+    C.render
+    input <- getInput (rdWindow newRd)
     case input of
       Exit -> return ()
       _    -> do
         let enemyResult = updateEnemies w
         if uerGameOver enemyResult
-           then clearScreen >> setCursorPosition (0,0) >> putStrLn "Game over!"
+           then showMessageAndWait newRd "Game over!"
            else do
              let inputResult = handleDir (uerWorld enemyResult) input
              if isJust (enemyAt inputResult (wHero w))
-                then clearScreen >> setCursorPosition (0,0) >> putStrLn "Game over!"
-                else gameLoop thisTiles inputResult
+                then showMessageAndWait newRd "Game over!"
+                else C.render >> gameLoop newRd inputResult
 
-drawTile :: MonadIO m => Tile -> m ()
+moveCursor :: Coord -> C.Update ()
+moveCursor (x,y) = C.moveCursor (fromIntegral y) (fromIntegral x)
+
+drawTile :: Tile -> C.Update ()
 drawTile t = do
-  setCursorPosition (tPosition t)
-  setSGR (tSgr t)
-  putStr [tCharacter t]
+  moveCursor (tPosition t)
+--   setSGR (tSgr t)
+--   putStr [tCharacter t]
+  C.drawString [tCharacter t]
 
-clearTile :: MonadIO m => Tile -> m ()
+clearTile :: Tile -> C.Update ()
 clearTile t = do
-  setCursorPosition (tPosition t)
-  setSGR [SetConsoleIntensity NormalIntensity,SetColor Foreground Vivid White]
-  putStr " "
+  moveCursor (tPosition t)
+  C.drawString " "
+--   setSGR [SetConsoleIntensity NormalIntensity,SetColor Foreground Vivid White]
+--   putStr " "
 
-drawHero :: MonadIO m => Coord -> m ()
-drawHero c = drawTile Tile {
-    tCharacter = '@'
-  , tSgr = [ SetConsoleIntensity BoldIntensity
-           , SetColor Foreground Vivid Blue
-           ]
-  , tPosition = c
-  }
+getCharEvent :: C.Window -> C.Curses Char
+getCharEvent w = do
+  e <- C.getEvent w Nothing
+  case e of
+    Just (C.EventCharacter c) -> return c
+    _ -> getCharEvent w
 
-getInput :: MonadIO m => m Input
-getInput = do
-  char <- getChar
+getInput :: C.Window -> C.Curses Input
+getInput w = do
+  char <- getCharEvent w
   case char of
     'q' -> return Exit
     'k' -> return Up
@@ -220,7 +231,7 @@ getInput = do
     'u' -> return UpRight
     'b' -> return DownLeft
     'n' -> return DownRight
-    _ -> getInput
+    _ -> getInput w
 
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
 obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)
@@ -232,7 +243,7 @@ playerAt :: World -> Coord -> Bool
 playerAt w c = wHero w == c
 
 data UpdateEnemyResult = UpdateEnemyResult {
-    uerWorld :: World
+    uerWorld    :: World
   , uerGameOver :: Bool
   }
 
@@ -293,7 +304,7 @@ handleDir w input = w { wHero = newCoord }
                     DownLeft  -> (heroX - 1, heroY + 1)
                     DownRight -> (heroX + 1, heroY + 1)
                     _ -> oldCoord
-        newCoord = if insideBounds (wViewport w) newCoord' then case obstacleAt w newCoord' of
+        newCoord = if insideRect (wViewport w) newCoord' then case obstacleAt w newCoord' of
                      Nothing -> newCoord'
                      Just _ -> oldCoord
                    else oldCoord

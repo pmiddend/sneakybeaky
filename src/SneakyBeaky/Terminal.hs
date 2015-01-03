@@ -1,34 +1,19 @@
 module SneakyBeaky.Terminal where
 
-import Control.Monad.IO.Class(MonadIO,liftIO)
-import qualified System.Console.ANSI as AnsiTerm
-import Prelude(String,Char,($),(.))
-import qualified System.IO as SystemIO
-import SneakyBeaky.Coord
+import qualified UI.NCurses             as C
+import SneakyBeaky.Rect
 
-clearScreen :: MonadIO m => m ()
-clearScreen = liftIO AnsiTerm.clearScreen
+type TerminalMonad = C.Curses
 
-putStrLn :: MonadIO m => String -> m ()
-putStrLn s = liftIO (SystemIO.putStrLn s)
+data TerminalData = TerminalData {
+    rdWindow :: C.Window
+  , rdViewport :: Rect
+  }
 
-putStr :: MonadIO m => String -> m ()
-putStr s = liftIO (SystemIO.putStr s)
+run :: Rect -> (TerminalData -> TerminalMonad a) -> IO a
+run standardViewport a = C.runCurses $ do
+  C.setEcho False
+  w <- C.newWindow ((fromIntegral . snd . rDim) standardViewport) ((fromIntegral . fst . rDim) standardViewport) 0 0
+  _ <- C.setCursorMode C.CursorInvisible
+  a (TerminalData w standardViewport)
 
-setCursorPosition :: MonadIO m => Coord -> m ()
-setCursorPosition (x,y) = liftIO $ AnsiTerm.setCursorPosition y x
-
-setSGR :: MonadIO m => [AnsiTerm.SGR] -> m ()
-setSGR = liftIO . AnsiTerm.setSGR
-
-getChar :: MonadIO m => m Char
-getChar = liftIO SystemIO.getChar
-
-hideCursor :: MonadIO m => m ()
-hideCursor = liftIO AnsiTerm.hideCursor
-
-showCursor :: MonadIO m => m ()
-showCursor = liftIO AnsiTerm.showCursor
-
-setTitle :: MonadIO m => String -> m ()
-setTitle = liftIO . AnsiTerm.setTitle
