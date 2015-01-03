@@ -1,15 +1,14 @@
 module Main where
 
 import           Control.Applicative    ((<$>), (<|>))
-import           Data.Graph.AStar       (aStar)
+import Control.Monad(replicateM)
+import qualified Data.HashMap.Strict    as Map
 import           Data.List              (find)
 import           Data.Maybe             (isJust, isNothing)
 import           Data.Monoid            ((<>))
 import qualified Data.Set               as Set
 import           Prelude                hiding (Either (..), getChar, putStr,
                                          putStrLn)
---import qualified Data.Set as Set
-import qualified Data.HashMap.Strict    as Map
 import           SneakyBeaky.Coord
 import           SneakyBeaky.Generation
 import           SneakyBeaky.Lifted
@@ -51,25 +50,34 @@ lightTilesUnion = Set.unions . map lightTiles
 gameTitle :: String
 gameTitle = "sneakybeaky"
 
-initialWorld :: [ObstacleTile] -> [LightSource] -> Coord -> Rect -> World
-initialWorld obstacles lightSources exit viewport = World {
+initialWorld :: [ObstacleTile] -> [Enemy] -> [LightSource] -> Coord -> Rect -> World
+initialWorld obstacles enemies lightSources exit viewport = World {
     wHero = (0,0)
   , wObstacles = obstacles
   , wExit = exit
   , wLightSources = lightSources
   , wViewport = viewport
-  , wEnemies = [Enemy (Tile (5,5) '0' (mkColorPair White Transparent)) False (1,0) 10 0 0 False]
+  , wEnemies = enemies
   }
 
 main :: IO ()
 main = do
-  let standardViewport = mkRectPosDim (0,0) (80,25)
-  run standardViewport $ do
-      obstacles <- evalRandIO $ generateObstacles standardViewport
-      let obstaclePositions = (tPosition . oTile) <$> obstacles
-      exit <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
-      lightSourcePosition <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
-      gameLoop (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
+  let viewport = mkRectPosDim (0,0) (80,25)
+  run viewport $ do
+      obstacles <- evalRandIO $ generateObstacles viewport
+      let obstaclePositions = Set.fromList ((tPosition . oTile) <$> obstacles)
+      enemies <- evalRandIO $ replicateM 6 (generateEnemy viewport obstaclePositions)
+      lightSources <- evalRandIO (replicateM 10 (generateLightSource viewport obstaclePositions))
+      (start,exit) <- evalRandIO (generateStartAndExit viewport obstaclePositions)
+      let world = World {
+              wHero = start
+            , wObstacles = obstacles
+            , wExit = exit
+            , wLightSources = lightSources
+            , wViewport = viewport
+            , wEnemies = enemies
+            }
+      gameLoop world
 
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
@@ -90,7 +98,7 @@ litTiles :: World -> CoordSet
 litTiles w = let lights = wLightSources w
                  lit = lightTilesUnion lights
                  obstacleTiles = obstaclesAsSet w
-                 litFilter lite = isNothing (foldr ((<|>) . (\l -> viewObstructed obstacleTiles (lsPosition l) lite)) Nothing lights)
+                 litFilter lite = any isNothing (map (\l -> viewObstructed obstacleTiles (lsPosition l) lite) lights)
              in Set.filter litFilter lit
 
 renderWorld :: World -> Rect -> [Tile]
@@ -99,11 +107,9 @@ renderWorld w viewport =
       enemyTiles = Map.fromList $ map tileToAssoc $ concatMap renderEnemy (wEnemies w)
       realTiles = obstacleTiles <> enemyTiles <> Map.fromList (map tileToAssoc [renderHero (wHero w),renderExit (wExit w)])
       renderedLit = (Map.fromList . map (\c -> (c,renderLit c)) . Set.toList) (litTiles w)
-  in (filter (insideRect viewport . tPosition) . map snd . Map.toList) (realTiles <> renderedLit)
+  in (filter ((\p -> insideRect viewport p && p /= ((\(x,y) -> (x-1,y-1)) (rBottomRight viewport))) . tPosition) . Map.elems) (realTiles <> renderedLit)
 
 renderLit :: Coord -> Tile
--- renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
--- renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 renderLit c = Tile { tCharacter = '.', tPosition = c,tColor = mkColorPair Blue Transparent }
 
 renderEnemy :: Enemy -> [Tile]
@@ -117,32 +123,12 @@ renderHero c = Tile { tCharacter = '@', tPosition = c,tColor = mkColorPair White
 renderExit :: Coord -> Tile
 renderExit c = Tile {
     tCharacter = '>'
---   , tSgr = [ SetConsoleIntensity BoldIntensity
---            , SetColor Foreground Vivid Blue
---            ]
   , tPosition = c
   , tColor = mkColorPair Blue Transparent
   }
 
 renderObstacle :: ObstacleTile -> Tile
 renderObstacle = oTile
-
-moore :: Coord -> Set.Set Coord
-moore (x,y) = Set.fromList [(x-1,y-1),(x,y-1),(x+1,y-1),(x-1,y),(x+1,y),(x-1,y+1),(x,y+1),(x+1,y+1)]
-
-calculateOptimalPath :: World -> Coord -> Coord -> Maybe [Coord]
-calculateOptimalPath w from to = aStar neighbors distance heuristic isGoal from
-  where obstacles = obstaclesAsSet w
-        neighbors c = moore c `Set.difference` obstacles
-        distance x y | x == y = 0
-                     | otherwise = 1
-        heuristic (x,y) = (x-fst to)*(x-fst to)+(y-snd to)*(y-snd to)
-        isGoal c = c == to
-
-{-drawOptimalPath w = case calculateOptimalPath w of
-    Nothing -> putStrLn "Oh crap"
---     Just p -> setCursorPosition (0,0) >> putStr ("|" <> (show . head) p <> "|")--mapM_ (drawTile . (\c -> Tile c 'P' [])) p
-    Just p -> mapM_ (drawTile . (\c -> Tile c 'P' [])) p-}
 
 showMessageAndWait :: String -> TerminalMonad ()
 showMessageAndWait s = drawStringCentered s >> getCharEvent >> return ()
@@ -214,8 +200,9 @@ updateEnemy w lt e | eAggro e = updateEnemyAggro w lt e
                    | otherwise = updateEnemyCalm w lt e
 
 updateEnemyAggro :: World -> CoordSet -> Enemy -> Enemy
-updateEnemyAggro w _ e = case calculateOptimalPath w ((tPosition . eTile) e) (wHero w) of
+updateEnemyAggro w _ e = case calculateOptimalPath (obstaclesAsSet w) ((tPosition . eTile) e) (wHero w) of
   Nothing -> e
+  Just [] -> e
   Just (x:_) -> e { eTile = (eTile e) { tPosition = x } }
 
 updateEnemyCalm :: World -> CoordSet -> Enemy -> Enemy
@@ -233,8 +220,14 @@ updateEnemyCalm w lt e =
       newFramesSeen = eFramesSeen e + if wHero w `Set.member` lt && newVisible then 1 else 0
       --newCharacter = tCharacter (eTile e)
       newAggro = newFramesSeen >= maxFramesSeen
-      newCharacter = if newAggro then '!' else (head . show) newFramesSeen
-      newTile = (eTile e) { tPosition = newPosition,tCharacter = newCharacter }
+      newColor = if newAggro
+                 then Red
+                 else case newFramesSeen of
+                       0 -> White
+                       1 -> Cyan
+                       2 -> Yellow
+                       _ -> Green
+      newTile = (eTile e) { tPosition = newPosition,tColor = mkColorPair newColor Transparent }
       newCurrentWalk = if isAtTurningPoint
                        then 0
                        else eCurrentWalk e + 1

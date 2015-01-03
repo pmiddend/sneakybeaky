@@ -1,19 +1,17 @@
 module SneakyBeaky.Generation where
 
-import           Prelude                hiding (Either (..))
+import           Prelude                hiding (Either (..),elem)
 import           SneakyBeaky.Coord
 -- import System.Console.ANSI
-import           Control.Exception.Base (bracket_)
 import           Control.Monad          (liftM, replicateM)
-import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Control.Monad.Random
-import           Data.List              (find, nub, (\\))
-import           Data.Monoid            (mconcat, (<>))
+import Control.Applicative
+import           Data.Graph.AStar       (aStar)
+import Data.Foldable(elem,Foldable)
+import           Data.List              (nub)
+import           Data.Monoid            (mconcat)
 import qualified Data.Set               as Set
-import           System.IO
 --import qualified Data.Set as Set
-import qualified Data.HashMap.Strict    as Map
-import           Data.Maybe             (isNothing)
 import           SneakyBeaky.Matrix
 import           SneakyBeaky.Rect
 import           SneakyBeaky.TileTypes
@@ -37,7 +35,7 @@ balancedWord p q eps | eps + p < q = 0 : balancedWord p q (eps + p)
 balancedWord p q eps               = 1 : balancedWord p q (eps + p - q)
 
 line :: Coord -> Coord -> [Coord]
-line start end = (takeWhile (/= end) $ line' start end) ++ [end]
+line start end = takeWhile (/= end) (line' start end) ++ [end]
 
 -- | Bresenham's line algorithm.
 -- Includes the first point and goes through the second to infinity.
@@ -51,6 +49,54 @@ line' (x0, y0) (x1, y1) =
       walk w xy = xy : walk (tail w) (step (head w) xy)
   in  walk (balancedWord p q 0) (x0, y0)
 
+randomListElement :: MonadRandom m => [a] -> m a
+randomListElement xs = do
+  i <- getRandomR (0,length xs-1)
+  return (xs !! i)
+
+moore :: Coord -> Set.Set Coord
+moore (x,y) = Set.fromList [(x-1,y-1),(x,y-1),(x+1,y-1),(x-1,y),(x+1,y),(x-1,y+1),(x,y+1),(x+1,y+1)]
+
+calculateOptimalPath :: CoordSet -> Coord -> Coord -> Maybe [Coord]
+calculateOptimalPath obstacles from to = aStar neighbors distance heuristic isGoal from
+  where neighbors c = moore c `Set.difference` obstacles
+        distance x y | x == y = 0
+                     | otherwise = 1
+        heuristic (x,y) = (x-fst to)*(x-fst to)+(y-snd to)*(y-snd to)
+        isGoal c = c == to
+
+generateEnemy :: (Applicative m,MonadRandom m,Foldable t) => Rect -> t Coord -> m Enemy
+generateEnemy viewport obstacles = Enemy
+                               <$> (Tile
+                               <$> generateNoConflict viewport obstacles
+                                <*> randomListElement "PFN"
+                                <*> pure (mkColorPair White Transparent))
+                               <*> pure False
+                               <*> randomListElement [(-1,-1),(-1,0),(-1,1),(-1,0),(1,0),(-1,1),(0,1),(1,1)]
+                               <*> getRandomR (1,20)
+                               <*> pure 0
+                               <*> pure 0
+                               <*> pure False
+
+generateLightSource :: (Applicative m,MonadRandom m,Foldable t) => Rect -> t Coord -> m LightSource
+generateLightSource viewport obstacles = LightSource <$> generateNoConflict viewport obstacles <*> getRandomR (10,20)
+
+walkLengthThreshold :: Rect -> Int
+walkLengthThreshold vp = let (w,h) = rDim vp
+                         in floor (fromIntegral (max w h) * 0.6 :: Double)
+
+generateStartAndExit :: (MonadRandom m) => Rect -> CoordSet -> m (Coord,Coord)
+generateStartAndExit viewport obstacles = do
+  start <- generateNoConflict viewport obstacles
+  end <- generateNoConflict viewport obstacles
+  let restart = case calculateOptimalPath obstacles start end of
+        Nothing -> True
+        Just [] -> True
+        _ -> False
+  if not restart
+    then return (start,end)
+    else generateStartAndExit viewport obstacles
+
 randomViewportCoord :: (MonadRandom m) => Rect -> m Coord
 randomViewportCoord c = do
   let (x0, y0) = rTopLeft c
@@ -59,12 +105,13 @@ randomViewportCoord c = do
   y <- getRandomR (y0, y1)
   return (x,y)
 
-generateNoConflict :: (MonadRandom m) => Rect -> [Coord] -> m Coord
-generateNoConflict viewport xs = do
+generateWhile :: (MonadRandom m) => Rect -> (Coord -> Bool) -> m Coord
+generateWhile viewport f = do
   c <- randomViewportCoord viewport
-  if c `notElem` xs
-    then return c
-    else generateNoConflict viewport xs
+  if not (f c) then return c else generateWhile viewport f
+
+generateNoConflict :: (MonadRandom m,Foldable t) => Rect -> t Coord -> m Coord
+generateNoConflict viewport xs = generateWhile viewport (`elem` xs)
 
 obstacleFromCoord :: Coord -> ObstacleTile
 obstacleFromCoord pos = ObstacleTile (Tile pos '#' (mkColorPair White Transparent)) True

@@ -26,6 +26,8 @@ type TerminalMonad = StateT TerminalData C.Curses
 
 data SneakyColor = Red
                  | Green
+                 | Yellow
+                 | Cyan
                  | Blue
                  | White
                  | Transparent
@@ -37,6 +39,8 @@ toCurses Green = C.ColorGreen
 toCurses Blue = C.ColorBlue
 toCurses White = C.ColorWhite
 toCurses Transparent = C.ColorDefault
+toCurses Yellow = C.ColorYellow
+toCurses Cyan = C.ColorCyan
 
 data SneakyColorPair = SneakyColorPair {
     cpForeground :: SneakyColor
@@ -118,4 +122,3 @@ run standardViewport a = C.runCurses $ do
   w <- C.newWindow ((fromIntegral . snd . rDim) standardViewport) ((fromIntegral . fst . rDim) standardViewport) 0 0
   _ <- C.setCursorMode C.CursorInvisible
   evalStateT a (TerminalData w standardViewport mempty mempty 1)
-
