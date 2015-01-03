@@ -1,6 +1,5 @@
 module SneakyBeaky.Terminal(
     run
-  , TerminalData
   , TerminalMonad
   , SneakyColor(..)
   , SneakyColorPair
@@ -11,9 +10,14 @@ module SneakyBeaky.Terminal(
   , drawStringCentered
   ) where
 
-import           Control.Monad.State.Strict (StateT,evalStateT,get,put)
-import           Control.Monad.Trans.Class (lift)
+import           Control.Monad              (forM_)
+import           Control.Monad.State.Strict (StateT, evalStateT, get, put,modify,gets)
+import           Control.Monad.Trans.Class  (lift)
 import           Data.List                  ((\\))
+import           Data.Map.Strict            (Map, insert, keysSet,(!))
+import           Data.Monoid                (mempty)
+import Control.Monad.IO.Class(MonadIO,liftIO)
+import           Data.Set                   (difference, fromList,toList)
 import           SneakyBeaky.Coord
 import           SneakyBeaky.Rect
 import qualified UI.NCurses                 as C
@@ -25,12 +29,19 @@ data SneakyColor = Red
                  | Blue
                  | White
                  | Transparent
-                 deriving(Eq,Show)
+                 deriving(Eq,Show,Ord)
+
+toCurses :: SneakyColor -> C.Color
+toCurses Red = C.ColorRed
+toCurses Green = C.ColorGreen
+toCurses Blue = C.ColorBlue
+toCurses White = C.ColorWhite
+toCurses Transparent = C.ColorDefault
 
 data SneakyColorPair = SneakyColorPair {
     cpForeground :: SneakyColor
   , cpBackground :: SneakyColor
-  } deriving(Eq,Show)
+  } deriving(Eq,Show,Ord)
 
 mkColorPair :: SneakyColor -> SneakyColor -> SneakyColorPair
 mkColorPair = SneakyColorPair
@@ -41,18 +52,23 @@ data Tile = Tile {
   , tColor     :: SneakyColorPair
   } deriving(Eq)
 
+type ColorMap = Map SneakyColorPair C.ColorID
+
 data TerminalData = TerminalData {
-    rdWindow    :: C.Window
-  , rdViewport  :: Rect
-  , rdPrevTiles :: [Tile]
+    rdWindow      :: C.Window
+  , rdViewport    :: Rect
+  , rdPrevTiles   :: [Tile]
+  , rdColors      :: ColorMap
+  , rdNextColorId :: Int
   }
 
 moveCursor :: Coord -> C.Update ()
 moveCursor (x,y) = C.moveCursor (fromIntegral y) (fromIntegral x)
 
-drawTile :: Tile -> C.Update ()
-drawTile t = do
+drawTile :: ColorMap -> Tile -> C.Update ()
+drawTile colors t = do
   moveCursor (tPosition t)
+  C.setColor (colors ! tColor t)
   C.drawString [tCharacter t]
 
 clearTile :: Tile -> C.Update ()
@@ -60,19 +76,25 @@ clearTile t = do
   moveCursor (tPosition t)
   C.drawString " "
 
-tileDiff :: [Tile] -> [Tile] -> C.Update ()
-tileDiff before after = do
+tileDiff :: ColorMap -> [Tile] -> [Tile] -> C.Update ()
+tileDiff cs before after = do
   let toClear = before \\ after
       toAdd = after \\ before
   mapM_ clearTile toClear
-  mapM_ drawTile toAdd
+  mapM_ (drawTile cs) toAdd
 
 render :: [Tile] -> TerminalMonad ()
 render ts = do
-  rd <- get
-  lift $ C.updateWindow (rdWindow rd) $ tileDiff (rdPrevTiles rd) ts
+  currentColors <- gets rdColors
+  let unassignedColors = fromList (map tColor ts) `difference` keysSet currentColors
+  forM_ (toList unassignedColors) $ \c -> do
+    nextColor <- gets rdNextColorId
+    cid <- lift $ C.newColorID (toCurses (cpForeground c)) (toCurses (cpBackground c)) (fromIntegral nextColor)
+    modify (\s -> s {rdNextColorId = rdNextColorId s + 1, rdColors = insert c cid (rdColors s)})
+  rd' <- get
+  lift $ C.updateWindow (rdWindow rd') $ tileDiff (rdColors rd') (rdPrevTiles rd') ts
   lift C.render
-  put (rd {rdPrevTiles = ts})
+  modify (\s -> s {rdPrevTiles = ts})
 
 getCharEvent :: TerminalMonad Char
 getCharEvent = do
@@ -95,5 +117,5 @@ run standardViewport a = C.runCurses $ do
   C.setEcho False
   w <- C.newWindow ((fromIntegral . snd . rDim) standardViewport) ((fromIntegral . fst . rDim) standardViewport) 0 0
   _ <- C.setCursorMode C.CursorInvisible
-  evalStateT a (TerminalData w standardViewport [])
+  evalStateT a (TerminalData w standardViewport mempty mempty 1)
 

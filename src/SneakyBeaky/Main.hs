@@ -104,7 +104,7 @@ renderWorld w viewport =
 renderLit :: Coord -> Tile
 -- renderLit c = Tile { tCharacter = '\x2591', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
 -- renderLit c = Tile { tCharacter = '.', tSgr = [SetConsoleIntensity NormalIntensity, SetColor Foreground Vivid Blue ], tPosition = c }
-renderLit c = Tile { tCharacter = '.', tPosition = c,tColor = mkColorPair White Transparent }
+renderLit c = Tile { tCharacter = '.', tPosition = c,tColor = mkColorPair Blue Transparent }
 
 renderEnemy :: Enemy -> [Tile]
 renderEnemy e | eVisible e = [eTile e]
