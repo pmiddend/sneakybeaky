@@ -1,30 +1,41 @@
 module SneakyBeaky.TileTypes where
 
-import SneakyBeaky.Coord
-import System.Console.ANSI
+import           SneakyBeaky.Coord
+
+data SneakyColor = Red
+                 | Green
+                 | Blue
+                 | White
+                 | Transparent
+                 deriving(Eq,Show)
+
+data SneakyColorPair = SneakyColorPair {
+    cpForeground :: SneakyColor
+  , cpBackground :: SneakyColor
+  } deriving(Eq,Show)
 
 data Tile = Tile {
-    tPosition :: !Coord
+    tPosition  :: !Coord
   , tCharacter :: !Char
-  , tSgr :: ![SGR]
+  , tColor     :: SneakyColorPair
   } deriving(Eq)
 
 data ObstacleTile = ObstacleTile {
-    oTile :: !Tile
+    oTile  :: !Tile
   , oSolid :: !Bool
   }
 
 data LightSource = LightSource {
     lsPosition :: !Coord
-  , lsRadius :: !Int
+  , lsRadius   :: !Int
   }
 
 data Enemy = Enemy {
-    eTile :: !Tile
-  , eAggro :: !Bool
-  , eWalkingDir :: !Coord
+    eTile          :: !Tile
+  , eAggro         :: !Bool
+  , eWalkingDir    :: !Coord
   , eWalkingRadius :: !Int
-  , eCurrentWalk :: !Int
-  , eFramesSeen :: !Int
-  , eVisible :: !Bool
+  , eCurrentWalk   :: !Int
+  , eFramesSeen    :: !Int
+  , eVisible       :: !Bool
   }

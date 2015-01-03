@@ -2,7 +2,7 @@ module SneakyBeaky.Generation where
 
 import SneakyBeaky.Coord
 import Prelude hiding (Either(..))
-import System.Console.ANSI
+-- import System.Console.ANSI
 import System.IO
 import Control.Monad(replicateM,liftM)
 import Control.Monad.IO.Class(MonadIO,liftIO)
@@ -14,7 +14,6 @@ import qualified Data.Set as Set
 --import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as Map
 import Data.Maybe(isNothing)
-import SneakyBeaky.Coord
 import SneakyBeaky.TileTypes
 import SneakyBeaky.Rect
 import SneakyBeaky.Matrix
@@ -30,13 +29,6 @@ clampRect bounds (x, y) =
   let (x0, y0) = rTopLeft bounds
       (x1, y1) = rBottomRight bounds
   in (clamp (x0, x1) x, clamp (y0, y1) y)
-
-insideBounds :: Rect -> Coord -> Bool
-insideBounds bounds (x, y) =
-  let (x0, y0) = rTopLeft bounds
-      (x1, y1) = rBottomRight bounds
-  in x0 <= x && x <= x1 && y0 <= y && y <= y1
-
 
 -- | See <http://roguebasin.roguelikedevelopment.org/index.php/Digital_lines>.
 balancedWord :: Int -> Int -> Int -> [Int]
@@ -74,7 +66,7 @@ generateNoConflict viewport xs = do
     else generateNoConflict viewport xs
 
 obstacleFromCoord :: Coord -> ObstacleTile
-obstacleFromCoord pos = ObstacleTile (Tile pos '#' []) True
+obstacleFromCoord pos = ObstacleTile (Tile pos '#' (SneakyColorPair White Transparent)) True
 
 generateObstacle :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacle bounds = do
@@ -98,7 +90,7 @@ generateObstacle bounds = do
         line q1 q3,
         line q2 q4,
         line q3 q4]
-  return $ map obstacleFromCoord $ filter (insideBounds bounds) $ Set.toList $ floodFill center (Set.fromList obstacles)
+  return $ map obstacleFromCoord $ filter (insideRect bounds) $ Set.toList $ floodFill center (Set.fromList obstacles)
 
 generateObstacles :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacles bounds = liftM concat $ replicateM 5 $
