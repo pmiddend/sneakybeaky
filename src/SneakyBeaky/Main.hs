@@ -157,15 +157,14 @@ gameLoop w =
     input <- getInput
     case input of
       Exit -> return ()
-      _    -> do
-        let enemyResult = updateEnemies w
-        if uerGameOver enemyResult
-           then showMessageAndWait "Game over!"
-           else do
-             let inputResult = handleDir (uerWorld enemyResult) input
-             if isJust (enemyAt inputResult (wHero w))
-                then showMessageAndWait "Game over!"
-                else gameLoop inputResult
+      _    ->
+        case updateEnemies w of
+          Nothing -> showMessageAndWait "Game over!"
+          Just newWorld -> do
+            let inputResult = handleDir newWorld input
+            if isJust (enemyAt inputResult (wHero inputResult))
+              then showMessageAndWait "Game over!"
+              else gameLoop inputResult
 
 getInput :: TerminalMonad Input
 getInput = do
@@ -192,28 +191,26 @@ enemyAt w c = find ((== c) . tPosition . eTile) (wEnemies w)
 playerAt :: World -> Coord -> Bool
 playerAt w c = wHero w == c
 
-data UpdateEnemyResult = UpdateEnemyResult {
-    uerWorld    :: World
-  , uerGameOver :: Bool
-  }
+replaceEnemy :: World -> Enemy -> Enemy -> World
+replaceEnemy w old new = w { wEnemies = replaceBy (wEnemies w) ((== (tPosition . eTile) old). tPosition . eTile) new }
 
 updateEnemyVisibility :: World -> World
 updateEnemyVisibility w = let os = obstaclesAsSet w
                           in foldr (updateEnemyVisibility' os) w (wEnemies w)
-  where updateEnemyVisibility' os e w' = w' {
-          wEnemies = replaceBy (wEnemies w') ((== (tPosition . eTile) e). tPosition . eTile) (e { eVisible = isNothing (viewObstructed os (wHero w') (tPosition . eTile $ e))})
-          }
+  where updateEnemyVisibility' os e w' = replaceEnemy w' e (e { eVisible = isNothing (viewObstructed os (wHero w') (tPosition . eTile $ e))})
 
-updateEnemies :: World -> UpdateEnemyResult
+updateEnemies :: World -> Maybe World
 updateEnemies ow = let lt = litTiles ow
-                   in foldr (updateEnemies' lt) (UpdateEnemyResult ow False) (wEnemies ow)
-  where updateEnemies' lt e w = let uer = updateEnemy (uerWorld w) lt e
-                                in UpdateEnemyResult { uerWorld = uerWorld uer,uerGameOver = uerGameOver uer || uerGameOver w }
+                       foldEnemy' e w' = w' >>= \w -> let re = updateEnemy w lt e
+                                                      in if (tPosition . eTile) re == wHero ow
+                                                         then Nothing
+                                                         else Just (replaceEnemy w e re)
+                   in foldr foldEnemy' (Just ow) (wEnemies ow)
 
 maxFramesSeen :: Int
 maxFramesSeen = 3
 
-updateEnemy :: World -> CoordSet -> Enemy -> UpdateEnemyResult
+updateEnemy :: World -> CoordSet -> Enemy -> Enemy
 updateEnemy w lt e =
   let oldPosition = tPosition (eTile e)
       newPosition' = oldPosition `pairPlus` eWalkingDir e
@@ -233,13 +230,7 @@ updateEnemy w lt e =
       newCurrentWalk = if isAtTurningPoint
                        then 0
                        else eCurrentWalk e + 1
-      newEnemy = Enemy newTile newAggro newWalkingDir (eWalkingRadius e) newCurrentWalk newFramesSeen newVisible
-  in UpdateEnemyResult {
-         uerWorld = w {
-            wEnemies = replaceBy (wEnemies w) ((== (tPosition . eTile) e). tPosition . eTile) newEnemy
-            }
-       , uerGameOver = playerAt w newPosition
-       }
+  in Enemy newTile newAggro newWalkingDir (eWalkingRadius e) newCurrentWalk newFramesSeen newVisible
 
 handleDir :: World -> Input -> World
 handleDir w input = w { wHero = newCoord }
