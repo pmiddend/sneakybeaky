@@ -64,12 +64,12 @@ initialWorld obstacles lightSources exit viewport = World {
 main :: IO ()
 main = do
   let standardViewport = mkRectPosDim (0,0) (80,25)
-  run standardViewport $ \td -> do
+  run standardViewport $ do
       obstacles <- evalRandIO $ generateObstacles standardViewport
       let obstaclePositions = (tPosition . oTile) <$> obstacles
       exit <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
       lightSourcePosition <- evalRandIO $ generateNoConflict standardViewport obstaclePositions
-      gameLoop td (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
+      gameLoop (initialWorld obstacles [LightSource lightSourcePosition 200] exit standardViewport)
 
 insideLight :: Coord -> LightSource -> Bool
 insideLight (x,y) (LightSource (lx,ly) r) = (x-lx)*(x-lx) + (y-ly)*(y-ly) <= r
@@ -145,31 +145,31 @@ calculateOptimalPath w = aStar neighbors distance heuristic isGoal (wHero w)
 --     Just p -> setCursorPosition (0,0) >> putStr ("|" <> (show . head) p <> "|")--mapM_ (drawTile . (\c -> Tile c 'P' [])) p
     Just p -> mapM_ (drawTile . (\c -> Tile c 'P' [])) p-}
 
-showMessageAndWait :: TerminalData -> String -> TerminalMonad ()
-showMessageAndWait rd s = drawStringCentered rd s >> getCharEvent rd >> return ()
+showMessageAndWait :: String -> TerminalMonad ()
+showMessageAndWait s = drawStringCentered s >> getCharEvent >> return ()
 
-gameLoop :: TerminalData -> World -> TerminalMonad ()
-gameLoop rd w =
+gameLoop :: World -> TerminalMonad ()
+gameLoop w =
   if wHero w == wExit w
-  then showMessageAndWait rd "You won!"
+  then showMessageAndWait "You won!"
   else do
-    newRd <- render rd (renderWorld (updateEnemyVisibility w) (wViewport w))
-    input <- getInput newRd
+    render (renderWorld (updateEnemyVisibility w) (wViewport w))
+    input <- getInput
     case input of
       Exit -> return ()
       _    -> do
         let enemyResult = updateEnemies w
         if uerGameOver enemyResult
-           then showMessageAndWait newRd "Game over!"
+           then showMessageAndWait "Game over!"
            else do
              let inputResult = handleDir (uerWorld enemyResult) input
              if isJust (enemyAt inputResult (wHero w))
-                then showMessageAndWait newRd "Game over!"
-                else gameLoop newRd inputResult
+                then showMessageAndWait "Game over!"
+                else gameLoop inputResult
 
-getInput :: TerminalData -> TerminalMonad Input
-getInput w = do
-  char <- getCharEvent w
+getInput :: TerminalMonad Input
+getInput = do
+  char <- getCharEvent
   case char of
     'q' -> return Exit
     'k' -> return Up
@@ -181,7 +181,7 @@ getInput w = do
     'u' -> return UpRight
     'b' -> return DownLeft
     'n' -> return DownRight
-    _ -> getInput w
+    _ -> getInput
 
 obstacleAt :: World -> Coord -> Maybe ObstacleTile
 obstacleAt w c = find ((== c) . tPosition . oTile) (wObstacles w)

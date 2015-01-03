@@ -28,6 +28,7 @@ executable sneakybeaky
                      , containers
                      , unordered-containers
                      , astar
+                     , mtl
   -- hs-source-dirs:      
   default-language:    Haskell2010
   ghc-options: -Wall

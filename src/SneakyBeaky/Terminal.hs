@@ -11,12 +11,14 @@ module SneakyBeaky.Terminal(
   , drawStringCentered
   ) where
 
+import           Control.Monad.State.Strict (StateT,evalStateT,get,put)
+import           Control.Monad.Trans.Class (lift)
+import           Data.List                  ((\\))
 import           SneakyBeaky.Coord
 import           SneakyBeaky.Rect
-import qualified UI.NCurses        as C
-import Data.List((\\))
+import qualified UI.NCurses                 as C
 
-type TerminalMonad = C.Curses
+type TerminalMonad = StateT TerminalData C.Curses
 
 data SneakyColor = Red
                  | Green
@@ -65,29 +67,33 @@ tileDiff before after = do
   mapM_ clearTile toClear
   mapM_ drawTile toAdd
 
-render :: TerminalData -> [Tile] -> TerminalMonad TerminalData
-render rd ts = do
-  C.updateWindow (rdWindow rd) $ tileDiff (rdPrevTiles rd) ts
-  C.render
-  return (rd {rdPrevTiles = ts})
+render :: [Tile] -> TerminalMonad ()
+render ts = do
+  rd <- get
+  lift $ C.updateWindow (rdWindow rd) $ tileDiff (rdPrevTiles rd) ts
+  lift C.render
+  put (rd {rdPrevTiles = ts})
 
-getCharEvent :: TerminalData -> TerminalMonad Char
-getCharEvent rd = do
-  e <- C.getEvent (rdWindow rd) Nothing
+getCharEvent :: TerminalMonad Char
+getCharEvent = do
+  rd <- get
+  e <- lift $ C.getEvent (rdWindow rd) Nothing
   case e of
     Just (C.EventCharacter c) -> return c
-    _ -> getCharEvent rd
+    _ -> getCharEvent
 
 clearScreen :: [Tile] -> C.Update ()
 clearScreen = mapM_ clearTile
 
-drawStringCentered :: TerminalData -> String -> TerminalMonad ()
-drawStringCentered rd s = C.updateWindow (rdWindow rd) (clearScreen (rdPrevTiles rd) >> moveCursor (((\x -> x - length s).(`div`2). fst . rDim . rdViewport) rd,((`div`2). snd . rDim . rdViewport) rd) >> C.drawString s) >> C.render
+drawStringCentered :: String -> TerminalMonad ()
+drawStringCentered s = do
+  rd <- get
+  lift $ C.updateWindow (rdWindow rd) (clearScreen (rdPrevTiles rd) >> moveCursor (((\x -> x - length s).(`div`2). fst . rDim . rdViewport) rd,((`div`2). snd . rDim . rdViewport) rd) >> C.drawString s) >> C.render
 
-run :: Rect -> (TerminalData -> TerminalMonad a) -> IO a
+run :: Rect -> TerminalMonad a -> IO a
 run standardViewport a = C.runCurses $ do
   C.setEcho False
   w <- C.newWindow ((fromIntegral . snd . rDim) standardViewport) ((fromIntegral . fst . rDim) standardViewport) 0 0
   _ <- C.setCursorMode C.CursorInvisible
-  a (TerminalData w standardViewport [])
+  evalStateT a (TerminalData w standardViewport [])
 
