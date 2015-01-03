@@ -130,15 +130,14 @@ renderObstacle = oTile
 moore :: Coord -> Set.Set Coord
 moore (x,y) = Set.fromList [(x-1,y-1),(x,y-1),(x+1,y-1),(x-1,y),(x+1,y),(x-1,y+1),(x,y+1),(x+1,y+1)]
 
-calculateOptimalPath :: World -> Maybe [Coord]
-calculateOptimalPath w = aStar neighbors distance heuristic isGoal (wHero w)
+calculateOptimalPath :: World -> Coord -> Coord -> Maybe [Coord]
+calculateOptimalPath w from to = aStar neighbors distance heuristic isGoal from
   where obstacles = obstaclesAsSet w
         neighbors c = moore c `Set.difference` obstacles
         distance x y | x == y = 0
                      | otherwise = 1
-        heuristic (x,y) = (x-fst goal)*(x-fst goal)+(y-snd goal)*(y-snd goal)
-        isGoal c = c == goal
-        goal = (80,20)
+        heuristic (x,y) = (x-fst to)*(x-fst to)+(y-snd to)*(y-snd to)
+        isGoal c = c == to
 
 {-drawOptimalPath w = case calculateOptimalPath w of
     Nothing -> putStrLn "Oh crap"
@@ -211,7 +210,16 @@ maxFramesSeen :: Int
 maxFramesSeen = 3
 
 updateEnemy :: World -> CoordSet -> Enemy -> Enemy
-updateEnemy w lt e =
+updateEnemy w lt e | eAggro e = updateEnemyAggro w lt e
+                   | otherwise = updateEnemyCalm w lt e
+
+updateEnemyAggro :: World -> CoordSet -> Enemy -> Enemy
+updateEnemyAggro w _ e = case calculateOptimalPath w ((tPosition . eTile) e) (wHero w) of
+  Nothing -> e
+  Just (x:_) -> e { eTile = (eTile e) { tPosition = x } }
+
+updateEnemyCalm :: World -> CoordSet -> Enemy -> Enemy
+updateEnemyCalm w lt e =
   let oldPosition = tPosition (eTile e)
       newPosition' = oldPosition `pairPlus` eWalkingDir e
       isAtTurningPoint = eCurrentWalk e + 1 == eWalkingRadius e
