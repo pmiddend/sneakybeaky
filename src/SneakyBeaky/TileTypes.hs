@@ -1,24 +1,7 @@
 module SneakyBeaky.TileTypes where
 
 import           SneakyBeaky.Coord
-
-data SneakyColor = Red
-                 | Green
-                 | Blue
-                 | White
-                 | Transparent
-                 deriving(Eq,Show)
-
-data SneakyColorPair = SneakyColorPair {
-    cpForeground :: SneakyColor
-  , cpBackground :: SneakyColor
-  } deriving(Eq,Show)
-
-data Tile = Tile {
-    tPosition  :: !Coord
-  , tCharacter :: !Char
-  , tColor     :: SneakyColorPair
-  } deriving(Eq)
+import SneakyBeaky.Terminal
 
 data ObstacleTile = ObstacleTile {
     oTile  :: !Tile

@@ -1,22 +1,23 @@
 module SneakyBeaky.Generation where
 
-import SneakyBeaky.Coord
-import Prelude hiding (Either(..))
+import           Prelude                hiding (Either (..))
+import           SneakyBeaky.Coord
 -- import System.Console.ANSI
-import System.IO
-import Control.Monad(replicateM,liftM)
-import Control.Monad.IO.Class(MonadIO,liftIO)
-import Control.Exception.Base(bracket_)
-import Data.Monoid((<>),mconcat)
-import Control.Monad.Random
-import Data.List(find,nub,(\\))
-import qualified Data.Set as Set
+import           Control.Exception.Base (bracket_)
+import           Control.Monad          (liftM, replicateM)
+import           Control.Monad.IO.Class (MonadIO, liftIO)
+import           Control.Monad.Random
+import           Data.List              (find, nub, (\\))
+import           Data.Monoid            (mconcat, (<>))
+import qualified Data.Set               as Set
+import           System.IO
 --import qualified Data.Set as Set
-import qualified Data.HashMap.Strict as Map
-import Data.Maybe(isNothing)
-import SneakyBeaky.TileTypes
-import SneakyBeaky.Rect
-import SneakyBeaky.Matrix
+import qualified Data.HashMap.Strict    as Map
+import           Data.Maybe             (isNothing)
+import           SneakyBeaky.Matrix
+import           SneakyBeaky.Rect
+import           SneakyBeaky.TileTypes
+import           SneakyBeaky.Terminal
 
 type CoordSet = Set.Set Coord
 
@@ -66,7 +67,7 @@ generateNoConflict viewport xs = do
     else generateNoConflict viewport xs
 
 obstacleFromCoord :: Coord -> ObstacleTile
-obstacleFromCoord pos = ObstacleTile (Tile pos '#' (SneakyColorPair White Transparent)) True
+obstacleFromCoord pos = ObstacleTile (Tile pos '#' (mkColorPair White Transparent)) True
 
 generateObstacle :: MonadRandom m => Rect -> m [ObstacleTile]
 generateObstacle bounds = do
