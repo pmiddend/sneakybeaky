@@ -11,13 +11,14 @@ module SneakyBeaky.Terminal(
   ) where
 
 import           Control.Monad              (forM_)
-import           Control.Monad.State.Strict (StateT, evalStateT, get, put,modify,gets)
+import           Control.Monad.IO.Class     (MonadIO, liftIO)
+import           Control.Monad.State.Strict (StateT, evalStateT, get, gets,
+                                             modify, put)
 import           Control.Monad.Trans.Class  (lift)
 import           Data.List                  ((\\))
-import           Data.Map.Strict            (Map, insert, keysSet,(!))
+import           Data.Map.Strict            (Map, insert, keysSet, (!))
 import           Data.Monoid                (mempty)
-import Control.Monad.IO.Class(MonadIO,liftIO)
-import           Data.Set                   (difference, fromList,toList)
+import           Data.Set                   (difference, fromList, toList)
 import           SneakyBeaky.Coord
 import           SneakyBeaky.Rect
 import qualified UI.NCurses                 as C
@@ -45,7 +46,7 @@ toCurses Cyan = C.ColorCyan
 data SneakyColorPair = SneakyColorPair {
     cpForeground :: SneakyColor
   , cpBackground :: SneakyColor
-  } deriving(Eq,Show,Ord)
+vv  } deriving(Eq,Show,Ord)
 
 mkColorPair :: SneakyColor -> SneakyColor -> SneakyColorPair
 mkColorPair = SneakyColorPair

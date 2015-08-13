@@ -1,14 +1,37 @@
 {-# LANGUAGE TemplateHaskell #-}
 module Main where
 
+import           ClassyPrelude
+import           Control.Lens                            (makeLenses,
+                                                          makePrisms, to, (^.))
 import           Linear.V2
-import Control.Lens(makeLenses,(^.))
-import System.Control.SneakyTerm.Tile
+import           Prelude                                 ()
+import           System.Console.SneakyTerm.Color
+import           System.Console.SneakyTerm.ColorPair
+import           System.Console.SneakyTerm.MonadTerminal
+import           System.Console.SneakyTerm.PointInt
+import           System.Console.SneakyTerm.Rect
+import           System.Console.SneakyTerm.Tile
 
 type Point = V2 Int
 
+data KeyColor = KeyRed
+              | KeyGreen
+              | KeyBlue
+
+$(makePrisms ''KeyColor)
+
+data Key = Key {
+    _keyColor :: KeyColor
+  , _keySeen  :: Bool
+  }
+
+$(makeLenses ''Key)
+
 data Translucency = Translucent
                   | Opaque
+
+$(makePrisms ''Translucency)
 
 data Player = Player {
     _playerPosition    :: Point
@@ -31,27 +54,24 @@ data Enemy = Enemy {
   , _enemyPosition        :: Point
   }
 
+$(makeLenses ''Enemy)
+
 data Solid = Solid {
-    _solidCharacter   :: Char
-  , _solidPosition    :: Point
-  , _solidMoveable    :: Bool
+    _solidCharacter    :: Char
+  , _solidPosition     :: Point
+  , _solidMoveable     :: Bool
   , _solidTranslucency :: Translucency
-  , _solidSeen        :: Bool
+  , _solidSeen         :: Bool
   }
+
+$(makeLenses ''Solid)
 
 data Exit = Exit {
     _exitPosition :: Point
   , _exitSeen     :: Bool
   }
 
-data Color = ColorRed
-           | ColorGreen
-           | ColorBlue
-
-data Key = Key {
-    _keyColor :: Color
-  , _keySeen  :: Bool
-  }
+$(makeLenses ''Exit)
 
 data Lamp = Lamp {
     _lampPosition  :: Point
@@ -59,24 +79,32 @@ data Lamp = Lamp {
   , _lampRadius    :: Int
   }
 
+$(makeLenses ''Lamp)
+
 data WaterArrow = WaterArrow {
     _waterArrowSeen :: Bool
   }
 
+$(makeLenses ''WaterArrow)
+
 data KillArrow = KillArrow {
     _killArrowSeen :: Bool
   }
+
+$(makeLenses ''KillArrow)
 
 data Game = Game {
     _gamePlayer      :: Player
   , _gameEnemies     :: [Enemy]
   , _gameSolids      :: [Solid]
   , _gameExit        :: Exit
-  , _gameKeys        :: [(Point,Key)]
+  , _gameKeys        :: [(Key,Point)]
   , _gameLamps       :: [Lamp]
-  , _gameWaterArrows :: [(Point,WaterArrow)]
-  , _gameKillArrows  :: [(Point,KillArrow)]
+  , _gameWaterArrows :: [(WaterArrow,Point)]
+  , _gameKillArrows  :: [(KillArrow,Point)]
   }
+
+$(makeLenses ''Game)
 
 {-
 Notes on rendering
@@ -102,7 +130,7 @@ Notes on rendering
 -}
 
 -- | Return all points lit by the lamp
-lampLitTiles :: Lamp                 -- ^ Lamp to test 
+lampLitTiles :: Lamp                 -- ^ Lamp to test
              -> (PointInt -> Translucency)   -- ^ Tile to translucency
              -> [PointInt]           -- ^ All lit points
 lampLitTiles = error "lampLitTiles not implemented"
@@ -110,6 +138,7 @@ lampLitTiles = error "lampLitTiles not implemented"
 visibleTiles :: Game -> [Tile]
 visibleTiles = error "visibleTiles not implemented"
 
+initialGame :: Game
 initialGame = Game{
   _gamePlayer = Player{
        _playerPosition = V2 10 10
@@ -117,21 +146,90 @@ initialGame = Game{
      , _playerKillArrows = 0
      , _playerKeys = []
     },
-  _gameEnemies = [],
-  _gameSolids = [],
+  _gameEnemies = [Enemy {
+                        _enemyCharacter = 'g'
+                      , _enemyPosition = V2 2 2}],
+  _gameSolids = [Solid {
+                         _solidCharacter = '|'
+                       , _solidPosition = V2 3 3}],
   _gameExit = Exit{_exitPosition = V2 1 1},
-  _
-              
+  _gameKeys = [(Key{_keyColor = KeyRed},V2 4 4)],
+  _gameLamps = [Lamp{_lampPosition = V2 5 5,_lampOpenFlame = False}],
+  _gameWaterArrows = [(WaterArrow{},V2 6 6)],
+  _gameKillArrows = [(KillArrow{},V2 7 7)]
   }
 
 playerTile :: Player -> Tile
 playerTile p = Tile{
       _tilePosition = p ^. playerPosition
     , _tileCharacter = '@'
-    , _tileColor = ColorPair 
+    , _tileColor = ColorPair White Transparent
+  }
+
+enemyTile :: Enemy -> Tile
+enemyTile e = Tile{
+    _tilePosition = e ^. enemyPosition
+  , _tileCharacter = e ^. enemyCharacter
+  , _tileColor = ColorPair White Transparent
+  }
+
+solidTile :: Solid -> Tile
+solidTile s = Tile{
+    _tilePosition = s ^. solidPosition
+  , _tileCharacter = s ^. solidCharacter
+  , _tileColor = ColorPair White Transparent
+  }
+
+exitTile :: Exit -> Tile
+exitTile e = Tile{
+    _tilePosition = e ^. exitPosition
+  , _tileCharacter = '>'
+  , _tileColor = ColorPair White Transparent
+  }
+
+keyTile :: Key -> PointInt -> Tile
+keyTile k p = Tile{
+    _tilePosition = p
+  , _tileCharacter = '&'
+  , _tileColor = ColorPair (keyColorToTermColor (k ^. keyColor)) Transparent
+  }
+  where keyColorToTermColor KeyRed = Red
+        keyColorToTermColor KeyGreen = Green
+        keyColorToTermColor KeyBlue = Blue
+
+lampTile :: Lamp -> Tile
+lampTile l = Tile{
+    _tilePosition = l ^. lampPosition
+  , _tileCharacter = if l ^. lampOpenFlame then '"' else '%'
+  , _tileColor = ColorPair Yellow Transparent
+  }
+
+waterArrowTile :: WaterArrow -> PointInt -> Tile
+waterArrowTile w p = Tile{
+    _tilePosition = p
+  , _tileCharacter = '!'
+  , _tileColor = ColorPair Blue Transparent
+  }
+
+killArrowTile :: KillArrow -> PointInt -> Tile
+killArrowTile k p = Tile{
+    _tilePosition = p
+  , _tileCharacter = '!'
+  , _tileColor = ColorPair Red Transparent
   }
 
 gameToTiles :: Game -> [Tile]
-gameToTiles g = 
+gameToTiles g =
+  [g ^. gamePlayer . to playerTile,g ^. gameExit . to exitTile] <>
+  (enemyTile <$> g ^. gameEnemies) <>
+  (solidTile <$> g ^. gameSolids) <>
+  (lampTile <$> g ^. gameLamps) <>
+  (uncurry keyTile <$> g ^. gameKeys) <>
+  (uncurry waterArrowTile <$> g ^. gameWaterArrows) <>
+  (uncurry killArrowTile <$> g ^. gameKillArrows)
 
-main = 
+main :: IO ()
+main = runTerminal (rectFromOriginAndDim (V2 0 0) (V2 80 25)) $ do
+  tmRender (gameToTiles initialGame)
+  _ <- tmCharEvent
+  return ()
