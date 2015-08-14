@@ -12,8 +12,8 @@ import           System.Console.SneakyTerm.MonadTerminal
 import           System.Console.SneakyTerm.PointInt
 import           System.Console.SneakyTerm.Rect
 import           System.Console.SneakyTerm.Tile
-
-type Point = V2 Int
+import SneakyBeaky.GenerateLine
+import SneakyBeaky.GenerateCircle
 
 data KeyColor = KeyRed
               | KeyGreen
@@ -34,7 +34,7 @@ data Translucency = Translucent
 $(makePrisms ''Translucency)
 
 data Player = Player {
-    _playerPosition    :: Point
+    _playerPosition    :: PointInt
   , _playerWaterArrows :: Int
   , _playerKillArrows  :: Int
   , _playerKeys        :: [Key]
@@ -48,17 +48,17 @@ data EnemyState = EnemyRelaxed
 
 data Enemy = Enemy {
     _enemyCharacter       :: Char
-  , _enemyRunPath         :: [Point]
+  , _enemyRunPath         :: [PointInt]
   , _enemyLastReachedNode :: Int
   , _enemyState           :: EnemyState
-  , _enemyPosition        :: Point
+  , _enemyPosition        :: PointInt
   }
 
 $(makeLenses ''Enemy)
 
 data Solid = Solid {
     _solidCharacter    :: Char
-  , _solidPosition     :: Point
+  , _solidPosition     :: PointInt
   , _solidMoveable     :: Bool
   , _solidTranslucency :: Translucency
   , _solidSeen         :: Bool
@@ -67,14 +67,14 @@ data Solid = Solid {
 $(makeLenses ''Solid)
 
 data Exit = Exit {
-    _exitPosition :: Point
+    _exitPosition :: PointInt
   , _exitSeen     :: Bool
   }
 
 $(makeLenses ''Exit)
 
 data Lamp = Lamp {
-    _lampPosition  :: Point
+    _lampPosition  :: PointInt
   , _lampOpenFlame :: Bool
   , _lampRadius    :: Int
   }
@@ -98,10 +98,10 @@ data Game = Game {
   , _gameEnemies     :: [Enemy]
   , _gameSolids      :: [Solid]
   , _gameExit        :: Exit
-  , _gameKeys        :: [(Key,Point)]
+  , _gameKeys        :: [(Key,PointInt)]
   , _gameLamps       :: [Lamp]
-  , _gameWaterArrows :: [(WaterArrow,Point)]
-  , _gameKillArrows  :: [(KillArrow,Point)]
+  , _gameWaterArrows :: [(WaterArrow,PointInt)]
+  , _gameKillArrows  :: [(KillArrow,PointInt)]
   }
 
 $(makeLenses ''Game)
@@ -133,7 +133,14 @@ Notes on rendering
 lampLitTiles :: Lamp                 -- ^ Lamp to test
              -> (PointInt -> Translucency)   -- ^ Tile to translucency
              -> [PointInt]           -- ^ All lit points
-lampLitTiles = error "lampLitTiles not implemented"
+lampLitTiles l isSolid = generateCirclePoints ( l ^. lampPosition ) (l ^. lampRadius)
+
+litTile :: PointInt -> Tile
+litTile p = Tile{
+    _tileCharacter = '▒'
+  , _tilePosition = p
+  , _tileColor = ColorPair Yellow Transparent
+  }
 
 visibleTiles :: Game -> [Tile]
 visibleTiles = error "visibleTiles not implemented"
@@ -152,7 +159,7 @@ initialGame = Game{
   _gameSolids = generateClosedRoom (rectFromOriginAndDim (V2 1 1) (V2 30 10)),
   _gameExit = Exit{_exitPosition = V2 1 1},
   _gameKeys = [(Key{_keyColor = KeyRed},V2 4 4)],
-  _gameLamps = [Lamp{_lampPosition = V2 5 5,_lampOpenFlame = False}],
+  _gameLamps = [Lamp{_lampPosition = V2 5 5,_lampOpenFlame = False,_lampRadius = 5}],
   _gameWaterArrows = [(WaterArrow{},V2 6 6)],
   _gameKillArrows = [(KillArrow{},V2 7 7)]
   }
@@ -218,6 +225,7 @@ killArrowTile k p = Tile{
 
 gameToTiles :: Game -> [Tile]
 gameToTiles g =
+  (litTile <$> ((g ^. gameLamps) >>= (\l -> lampLitTiles l undefined))) <>
   [g ^. gamePlayer . to playerTile,g ^. gameExit . to exitTile] <>
   (enemyTile <$> g ^. gameEnemies) <>
   (solidTile <$> g ^. gameSolids) <>
