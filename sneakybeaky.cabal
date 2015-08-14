@@ -27,7 +27,6 @@ executable sneakybeaky
                      , random
                      , containers
                      , unordered-containers
---                     , astar
                      , lens
                      , linear
                      , sneakyterm

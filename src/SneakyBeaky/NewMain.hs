@@ -149,9 +149,7 @@ initialGame = Game{
   _gameEnemies = [Enemy {
                         _enemyCharacter = 'g'
                       , _enemyPosition = V2 2 2}],
-  _gameSolids = [Solid {
-                         _solidCharacter = '|'
-                       , _solidPosition = V2 3 3}],
+  _gameSolids = generateClosedRoom (rectFromOriginAndDim (V2 1 1) (V2 30 10)),
   _gameExit = Exit{_exitPosition = V2 1 1},
   _gameKeys = [(Key{_keyColor = KeyRed},V2 4 4)],
   _gameLamps = [Lamp{_lampPosition = V2 5 5,_lampOpenFlame = False}],
@@ -227,6 +225,26 @@ gameToTiles g =
   (uncurry keyTile <$> g ^. gameKeys) <>
   (uncurry waterArrowTile <$> g ^. gameWaterArrows) <>
   (uncurry killArrowTile <$> g ^. gameKillArrows)
+
+generateClosedRoom :: RectInt -> [Solid]
+generateClosedRoom r = top <> leftTop <> bottom <> leftBottom <> rightBottom <> left <> right <> rightTop
+  where
+    top = solid '─' <$> [V2 x (r ^. rectTop) | x <- [r ^. rectLeft + 1..r ^. rectRight - 1]]
+    bottom = solid '─' <$> [V2 x (r ^. rectBottom) | x <- [r ^. rectLeft + 1..r ^. rectRight - 1]]
+    left = solid '│' <$> [V2 (r ^. rectLeft) y | y <- [r ^. rectTop + 1..r ^. rectBottom - 1]]
+    right = solid '│' <$> [V2 (r ^. rectRight) y | y <- [r ^. rectTop + 1..r ^. rectBottom - 1]]
+    leftTop = return $ solid '┌' (r ^. rectLeftTop)
+    rightTop = return $ solid '┐' (r ^. rectRightTop)
+    leftBottom = return $ solid '└' (r ^. rectLeftBottom)
+    rightBottom = return $ solid '┘' (r ^. rectRightBottom)
+    solid c p =
+      Solid{
+          _solidCharacter = c
+        , _solidPosition = p
+        , _solidMoveable = False
+        , _solidTranslucency = Opaque
+        , _solidSeen = False
+        }
 
 main :: IO ()
 main = runTerminal (rectFromOriginAndDim (V2 0 0) (V2 80 25)) $ do
