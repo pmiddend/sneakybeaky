@@ -15,6 +15,44 @@ import           System.Console.SneakyTerm.Tile
 import SneakyBeaky.GenerateLine
 import SneakyBeaky.GenerateCircle
 
+divNearest :: Integral a => a -> a -> a
+divNearest x y = (x + (y `div` 2)) `div` y
+
+uncons :: [a] -> Maybe (a,[a])
+uncons [] = Nothing
+uncons (x:xs) = Just (x,xs)
+
+castShadow :: ( RealFrac a ) =>
+                    V2 a -- ^ Starting point
+                    -> a -- ^ Starting slope
+                    -> a -- ^ End slope
+                    -> (PointInt -> Bool) -- ^ Tile position to translucency
+                    -> [PointInt] -- ^ List of lit tiles
+castShadow (V2 x y) ss se isBlocked =
+  let
+    endx = se * x
+    (visibleTiles,remainder) = break isBlocked [V2 x' (round y) | x' <- [round x..round endx]]
+  in
+   case remainder of
+     -- nothing is blocking our way, so go one row up, and a little to the left
+     [] -> visibleTiles <> castShadow (V2 (x + ss) (y+1)) ss se isBlocked
+     (firstBlocked:xs) ->
+       let
+         newse = fromIntegral (firstBlocked ^. _x + 1) / fromIntegral (firstBlocked ^. _y)
+         blockerRecursion = castShadow (V2 (x + ss) (y+1)) ss newse isBlocked
+         nextNonblocked = takeWhile isBlocked xs
+         remainder' =
+           case headMay nextNonblocked of
+             Nothing -> []
+             Just firstNonblock ->
+               let
+                 newss = fromIntegral (firstNonblock ^. _x) / fromIntegral (firstNonblock ^. _y + 1)
+               in
+                 castShadow (fromIntegral <$> firstNonblock) newss se isBlocked 
+       in
+         visibleTiles <> blockerRecursion <> remainder'
+     
+
 data KeyColor = KeyRed
               | KeyGreen
               | KeyBlue
@@ -130,10 +168,10 @@ Notes on rendering
 -}
 
 -- | Return all points lit by the lamp
-lampLitTiles :: Lamp                 -- ^ Lamp to test
-             -> (PointInt -> Translucency)   -- ^ Tile to translucency
-             -> [PointInt]           -- ^ All lit points
-lampLitTiles l isSolid = generateCirclePoints ( l ^. lampPosition ) (l ^. lampRadius)
+lampLitTiles :: (PointInt -> Translucency) -> -- ^ Tile to translucency
+                Lamp ->
+                [PointInt]           -- ^ All lit points
+lampLitTiles isSolid l = generateCirclePoints ( l ^. lampPosition ) (l ^. lampRadius)-- >>= (line (l ^. lampPosition))
 
 litTile :: PointInt -> Tile
 litTile p = Tile{
@@ -225,7 +263,7 @@ killArrowTile k p = Tile{
 
 gameToTiles :: Game -> [Tile]
 gameToTiles g =
-  (litTile <$> ((g ^. gameLamps) >>= (\l -> lampLitTiles l undefined))) <>
+  (litTile <$> ((g ^. gameLamps) >>= lampLitTiles undefined)) <>
   [g ^. gamePlayer . to playerTile,g ^. gameExit . to exitTile] <>
   (enemyTile <$> g ^. gameEnemies) <>
   (solidTile <$> g ^. gameSolids) <>
