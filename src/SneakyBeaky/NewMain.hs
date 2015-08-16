@@ -1,57 +1,144 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
 import           ClassyPrelude
+import qualified Data.List.NonEmpty as NE
 import           Control.Lens                            (makeLenses,
-                                                          makePrisms, to, (^.))
+                                                          makePrisms, to, (^.),view,(&),ix,(.~))
 import           Linear.V2
 import           Prelude                                 ()
+import           SneakyBeaky.GenerateCircle
+import           SneakyBeaky.GenerateLine
 import           System.Console.SneakyTerm.Color
 import           System.Console.SneakyTerm.ColorPair
 import           System.Console.SneakyTerm.MonadTerminal
 import           System.Console.SneakyTerm.PointInt
 import           System.Console.SneakyTerm.Rect
 import           System.Console.SneakyTerm.Tile
-import SneakyBeaky.GenerateLine
-import SneakyBeaky.GenerateCircle
 
 divNearest :: Integral a => a -> a -> a
 divNearest x y = (x + (y `div` 2)) `div` y
 
-uncons :: [a] -> Maybe (a,[a])
-uncons [] = Nothing
-uncons (x:xs) = Just (x,xs)
+maybeFlipped :: Maybe a -> b -> (a -> b) -> b
+maybeFlipped Nothing b _ = b
+maybeFlipped (Just x) _ f = f x
 
-castShadow :: ( RealFrac a ) =>
-                    V2 a -- ^ Starting point
-                    -> a -- ^ Starting slope
-                    -> a -- ^ End slope
-                    -> (PointInt -> Bool) -- ^ Tile position to translucency
-                    -> [PointInt] -- ^ List of lit tiles
-castShadow (V2 x y) ss se isBlocked =
+{-
+  Testing simple case:
+
+  castShadow (x=1,y=1,ss=1,se=0) =
+    endx = 0
+    (visibleTiles,remainder) = break isBlocked [V2 [1..0] 1]
+    visibleTiles = [V2 1 1,V2 0 1]
+    remainder = []
+    result = visibleTiles <> castShadow (x=2,y=2,ss=1,se=0)
+
+  castShadow (x=2,y=2,ss=1,se=0) =
+    endx = 0
+    (visibleTiles,remainder) = break isBlocked [V2 [2..0] 2]
+
+  ...
+
+  works
+
+  Testing example case:
+
+  castShadow (x=12,y=12,ss=1,se=0) =
+    endx = 0
+    (visibleTiles,remainder) = break isBlocked [V2 [12..0] 12]
+    visibleTiles = [V2 12 12,V2 11 12,V2 10 12]
+    remainder = [V2 9 12,V2 8 12,...]
+    xs = [V2 8 12,V2 7 12,...]
+    newse = fromIntegral 10 / fromIntegral 12 = 0.83
+    blockerRecursion =
+      castShadow (x=13,y=13,ss=1,se=0.83) =
+        endx = 0.83 * 13 = 10.79
+        (visibleTiles,remainder) = break isBlocked [V2 [13..11] 13]
+        visibleTiles = [V2 13 13,V2 12 13,V2 11 13]
+        remainder = []
+    nextNonblocked = dropWhile isBlocked [V2 8 12,V2 7 12,...]
+    nextNonblocked = [V2 7 12,V2 6 12,...]
+    (fnbx=7,fnby=12)
+    newss = 8/13 = 0.61
+    remainder' =
+      castShadow(x=7,y=12,ss=0.61,se=1)
+ -}
+
+-- | Calculate adjacent spans of blocked/free tiles
+spans :: forall a.Enum a =>
+         (a -> Bool) -- ^ Tile position (reduced to one coordinate) to translucency
+         -> a -- ^ x coordinate start
+         -> a -- ^ x coordinate end
+         -> [NE.NonEmpty a]
+spans isBlocked xs xe =
+    map snd . filter (not . fst) . groupByEquals isBlocked . reverse $ [xe..xs]
+
+slope :: Fractional a => V2 a -> a
+slope (V2 x y) = x / y
+
+groupByEquals :: (Foldable f, Eq b) => (a -> b) -> f a -> [(b, NE.NonEmpty a)]
+groupByEquals f xs = fmap (\l -> (f (NE.head l),l)) . NE.groupBy ((==) `on` f) $ xs
+
+{-
+ - Second implementation, relying on the spans
+ - Calculate spans of free blocks
+ - Return each of the free spans
+ - For each span, start recursive calculation
+ -}
+printShadowCast :: [PointInt] -> IO ()
+printShadowCast r =
+  let
+    lines :: [(Int,NE.NonEmpty PointInt)]
+    lines = groupByEquals (view _y) r
+    sortedLines :: [(Int,NE.NonEmpty PointInt)]
+    sortedLines = sortBy (comparing fst) lines
+    mapLine :: (Int,NE.NonEmpty PointInt) -> Text
+    mapLine (n,points) = foldr (\(V2 x _) s -> s & ix x .~ '.') (replicate n ' ') points
+    mappedLines :: [Text]
+    mappedLines = mapLine <$> sortedLines
+  in
+    mapM_ putStrLn (reverse mappedLines)
+
+castShadow :: forall a.( RealFrac a ) =>
+  V2 a -- ^ Starting point
+  -> a -- ^ End slope
+  -> (PointInt -> Bool) -- ^ Tile position to translucency
+  -> [PointInt] -- ^ List of lit tiles
+castShadow (V2 sx sy) se isBlocked =
+  let
+    -- Integral version of the start vector
+    (V2 sxi syi) = round <$> (V2 sx sy)
+    -- Non-blocked spans
+    spanResult = ((`V2` syi) <$>) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
+    recursion xs =
+      let
+        f = fromIntegral <$> NE.head xs :: V2 a
+        l = fromIntegral <$> NE.last xs :: V2 a
+      in
+        castShadow (f + V2 (slope f) 1) (slope l) isBlocked
+  in
+    join (NE.toList <$> spanResult) <> concatMap recursion spanResult
+  {- First implementation
   let
     endx = se * x
     (visibleTiles,remainder) = break isBlocked [V2 x' (round y) | x' <- [round x..round endx]]
   in
-   case remainder of
-     -- nothing is blocking our way, so go one row up, and a little to the left
-     [] -> visibleTiles <> castShadow (V2 (x + ss) (y+1)) ss se isBlocked
-     (firstBlocked:xs) ->
-       let
-         newse = fromIntegral (firstBlocked ^. _x + 1) / fromIntegral (firstBlocked ^. _y)
-         blockerRecursion = castShadow (V2 (x + ss) (y+1)) ss newse isBlocked
-         nextNonblocked = takeWhile isBlocked xs
-         remainder' =
-           case headMay nextNonblocked of
-             Nothing -> []
-             Just firstNonblock ->
-               let
-                 newss = fromIntegral (firstNonblock ^. _x) / fromIntegral (firstNonblock ^. _y + 1)
-               in
-                 castShadow (fromIntegral <$> firstNonblock) newss se isBlocked 
-       in
-         visibleTiles <> blockerRecursion <> remainder'
-     
+   maybeFlipped (uncons remainder) (visibleTiles <> castShadow (V2 (x + ss) (y+1)) ss se isBlocked) $ \(V2 fbx fby,xs) ->
+     let
+       newse = fromIntegral (fbx + 1) / fromIntegral fby
+       blockerRecursion = castShadow (V2 (x + ss) (y+1)) ss newse isBlocked
+       nextNonblocked = dropWhile isBlocked xs
+       remainder' =
+         maybeFlipped (headMay nextNonblocked) [] $ \(V2 fnbx fnby) ->
+           let
+             newss = fromIntegral (fnbx + 1) / fromIntegral (fnby + 1)
+           in
+             castShadow (fromIntegral <$> (V2 fnbx fnby)) newss se isBlocked
+     in
+       visibleTiles <> blockerRecursion <> remainder'
+-}
+
 
 data KeyColor = KeyRed
               | KeyGreen

@@ -22,7 +22,7 @@ executable sneakybeaky
   -- other-extensions:    
   build-depends:       base >=4.7 && <=4.8
                      , transformers
---                     , semigroups
+                     , semigroups
                      , ncurses
                      , MonadRandom
                      , random
