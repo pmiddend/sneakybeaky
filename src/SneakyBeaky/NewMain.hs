@@ -1,8 +1,11 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
 import           ClassyPrelude
+import Control.Monad.Writer(Writer,tell)
 import qualified Data.List.NonEmpty as NE
 import           Control.Lens                            (makeLenses,
                                                           makePrisms, to, (^.),view,(&),ix,(.~))
@@ -90,35 +93,48 @@ printShadowCast :: [PointInt] -> IO ()
 printShadowCast r =
   let
     lines :: [(Int,NE.NonEmpty PointInt)]
-    lines = groupByEquals (view _y) r
+    lines = groupByEquals (view _y) (sortBy (comparing (view _y)) r)
     sortedLines :: [(Int,NE.NonEmpty PointInt)]
     sortedLines = sortBy (comparing fst) lines
+    numLines = length sortedLines
     mapLine :: (Int,NE.NonEmpty PointInt) -> Text
-    mapLine (n,points) = foldr (\(V2 x _) s -> s & ix x .~ '.') (replicate n ' ') points
+    mapLine (n,points) = foldr (\(V2 x _) s -> s & ix (numLines - x - 1) .~ '.') (replicate numLines ' ') points
     mappedLines :: [Text]
     mappedLines = mapLine <$> sortedLines
   in
     mapM_ putStrLn (reverse mappedLines)
 
-castShadow :: forall a.( RealFrac a ) =>
+tagFirst :: [a] -> [(Bool,a)]
+tagFirst [] = []
+tagFirst (x:xs) = (True,x) : map (False,) xs
+
+castShadow :: forall a.( Show a,RealFrac a ) =>
   V2 a -- ^ Starting point
+  -> a -- ^ Start slope
   -> a -- ^ End slope
   -> (PointInt -> Bool) -- ^ Tile position to translucency
-  -> [PointInt] -- ^ List of lit tiles
-castShadow (V2 sx sy) se isBlocked =
+  -> Writer [Text] [PointInt] -- ^ List of lit tiles
+castShadow (V2 sx sy) ss se isBlocked =
   let
     -- Integral version of the start vector
     (V2 sxi syi) = round <$> (V2 sx sy)
     -- Non-blocked spans
     spanResult = ((`V2` syi) <$>) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
-    recursion xs =
+    recursion :: (Bool,NE.NonEmpty PointInt) -> Writer [Text] [PointInt]
+    recursion (isFirst,xs) =
       let
         f = fromIntegral <$> NE.head xs :: V2 a
+        fs = if isFirst then ss else slope f
         l = fromIntegral <$> NE.last xs :: V2 a
-      in
-        castShadow (f + V2 (slope f) 1) (slope l) isBlocked
-  in
-    join (NE.toList <$> spanResult) <> concatMap recursion spanResult
+      in do
+        tell ["recursion at " <> pack (show (f + V2 fs 1)) <> ", end slope " <> pack (show (slope l))]
+        castShadow (f + V2 fs 1) fs (slope l) isBlocked
+  in do
+    tell ["Span result " <> pack (show (spanResult))]
+    spanResults <- mapM recursion (tagFirst spanResult)
+    let result = join (NE.toList <$> spanResult) <> concat spanResults
+    tell ["Returning " <> pack (show result)]
+    return result
   {- First implementation
   let
     endx = se * x
