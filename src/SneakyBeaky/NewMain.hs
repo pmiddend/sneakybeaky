@@ -9,12 +9,11 @@ module Main where
 import           ClassyPrelude
 import Control.Monad.Writer(Writer,tell)
 import qualified Data.List.NonEmpty as NE
-import           Control.Lens                            (makeLenses,
+import           Control.Lens                            (makeLenses,lens,Lens',_2,_1,
                                                           makePrisms, to, (^.),view,(&),ix,(.~))
 import           Linear.V2
 import           Prelude                                 ()
 import           SneakyBeaky.GenerateCircle
-import           SneakyBeaky.GenerateLine
 import           System.Console.SneakyTerm.Color
 import           System.Console.SneakyTerm.ColorPair
 import           System.Console.SneakyTerm.MonadTerminal
@@ -75,19 +74,32 @@ data Span a = Span Bool Bool (NE.NonEmpty a)
 
 deriving instance Show a => Show (Span a)
 
-listWithNeighbors :: [a] -> [(Maybe a,a,Maybe a)]
-listWithNeighbors [] = []
-listWithNeighbors [x] = [(Nothing,x,Nothing)]
-listWithNeighbors (x:y:z:fs) = [(Just x,y,Just z)] <> listWithNeighbors (y:z:fs)
-listWithNeighbors [x,y] = [(Nothing,x,Just y)] <> [(Just x,y,Nothing)]
+zipLeft :: [a] -> [(Maybe a,a)]
+zipLeft xs = zip (Nothing : (Just <$> xs)) xs
 
--- listWithNeighbors x:y:z:a:b:c:[]
--- listWithNeighbors (x:y:z:a:b:c) = [Just x,y,Just z] <> listWithNeighbors (y:z:a:b:c)
---                                 = [Just x,y,Just z] <> [Just y,z,Just a] <> listWithNeighbors (z:a:b:c)
---                                 = [Just x,y,Just z] <> [Just y,z,Just a] <> [Just z,a,Just b] <> listWithNeighbors (a:b:c)
---                                 = [Just x,y,Just z] <> [Just y,z,Just a] <> [Just z,a,Just b] <> [Just a,b,Just c] <> listWithNeighbors (b:c:[])
+zipRight :: [a] -> [(a,Maybe a)]
+zipRight xs = zip xs ((Just <$> drop 1 xs) <> [Nothing])
 
-{-
+zipWithLeft :: (Maybe b -> b -> c) -> [b] -> [c]
+zipWithLeft f xs = zipWith f (Nothing : (Just <$> xs)) xs
+
+zipWithRight :: (a -> Maybe a -> c) -> [a] -> [c]
+zipWithRight f xs = zipWith f xs ((Just <$> drop 1 xs) <> [Nothing])
+
+data Neighbors a = Neighbors (Maybe a) a (Maybe a) deriving(Functor)
+
+leftNeighbor :: Lens' (Neighbors a) (Maybe a)
+leftNeighbor = lens (\(Neighbors l _ _) -> l) (\(Neighbors _ x r) l -> Neighbors l x r)
+
+rightNeighbor :: Lens' (Neighbors a) (Maybe a)
+rightNeighbor = lens (\(Neighbors _ _ r) -> r) (\(Neighbors l x _) r -> Neighbors l x r)
+
+atElem :: Lens' (Neighbors a) a
+atElem = lens (\(Neighbors _ x _) -> x) (\(Neighbors l _ r) x -> Neighbors l x r)
+
+withNeighbors :: [b] -> [Neighbors b]
+withNeighbors xs = zipWithRight (\(left,x) right -> Neighbors left x (snd <$> right)) (zipWithLeft (,) xs)
+
 -- | Calculate adjacent spans of blocked/free tiles
 spans :: forall a.Enum a =>
          (a -> Bool) -- ^ Tile position (reduced to one coordinate) to translucency
@@ -96,19 +108,16 @@ spans :: forall a.Enum a =>
          -> [Span a]
 spans isBlocked xs xe =
   let
+    blocks :: [a]
     blocks = reverse [xe..xs]
-    groups = groupByEquals isblocked blocks
+    groups :: [Neighbors (Bool,NE.NonEmpty a)]
+    groups = withNeighbors (groupByEquals isBlocked blocks)
+    relevantBlocks :: [Neighbors (Bool,NE.NonEmpty a)]
+    relevantBlocks = filter (not . view (atElem . _1)) groups
+    mapBlock :: Neighbors (Bool,NE.NonEmpty a) -> Span a
+    mapBlock block = Span (block ^. leftNeighbor . to isJust) (block ^. rightNeighbor . to isJust) (block ^. atElem . _2)
   in
-    case groups of
-      [] -> []
-      [(True,_)] -> []
-      [(False,xs)] -> [Span False False xs]
-      [(False,xs):(True,ys):zs] -> Span False True xs : spans' ((True,ys):zs)
-      [(True,xs):(False,ys):zs] -> Span True
-    if any isBlocked blocks
-    then SpanResultBlocked (map snd . filter (not . fst) . groupByEquals isBlocked $ blocks)
-    else SpanResultFree (NE.fromList blocks)
--}
+    mapBlock <$> relevantBlocks
 
 slope :: Fractional a => V2 a -> a
 slope (V2 x y) = x / y
@@ -147,8 +156,77 @@ packShow = pack . show
 concatMapM        :: (Monad m) => (a -> m [b]) -> [a] -> m [b]
 concatMapM f xs   =  liftM concat (mapM f xs)
 
+{- new version
+castShadow :: forall a.( Show a,RealFrac a ) =>
+  V2 a -- ^ Starting point
+  -> a -- ^ Start slope
+  -> a -- ^ End slope
+  -> (PointInt -> Bool) -- ^ Tile position to translucency
+  -> Writer [Text] [PointInt] -- ^ List of lit tiles
+castShadow (V2 sx sy) ss se isBlocked =
+  let
+    -- Integral version of the start vector
+    (V2 sxi syi) = round <$> (V2 sx sy)
+    -- Non-blocked spans
+    spanResults :: Span PointInt
+    spanResults = (`V2` syi) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
+    recursion :: Span PointInt -> Writer [Text] [PointInt]
+    recursion (isFirst,xs) =
+      let
+        f = fromIntegral <$> NE.head xs :: V2 a
+        fs = slope f
+        l = fromIntegral <$> NE.last xs :: V2 a
+        ls = if isFirst then slope l else se
+      in do
+        tell ["recursion (f=" <> packShow isFirst <> ") at " <> packShow (f + V2 fs 1) <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
+        result <- castShadow (f + V2 fs 1) fs ls isBlocked
+        return $ NE.toList xs <> result
+  in do
+    tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
+    result <- spanResult spanResults freeRecursion (concatMapM recursion . tagFirst)
+    tell ["Returning " <> packShow result]
+    return result
+-}
+
 {-
 -- If starts blocked, calculate new slope, too
+castShadow :: forall a.( Show a,RealFrac a ) =>
+  V2 a -- ^ Starting point
+  -> a -- ^ Start slope
+  -> a -- ^ End slope
+  -> (PointInt -> Bool) -- ^ Tile position to translucency
+  -> Writer [Text] [PointInt] -- ^ List of lit tiles
+castShadow (V2 sx sy) ss se isBlocked =
+  let
+    -- Integral version of the start vector
+    (V2 sxi syi) = round <$> (V2 sx sy)
+    -- Non-blocked spans
+    spanResults :: SpanResult PointInt
+    spanResults = (`V2` syi) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
+    freeRecursion :: NE.NonEmpty PointInt -> Writer [Text] [PointInt]
+    freeRecursion xs = do
+      tell ["Free recursion on " <> packShow xs]
+      let
+        f = fromIntegral <$> NE.head xs :: V2 a
+        fs = slope f
+      result <- castShadow (f + V2 fs 1) fs se isBlocked
+      return $ NE.toList xs <> result
+    recursion :: (Bool,NE.NonEmpty PointInt) -> Writer [Text] [PointInt]
+    recursion (isFirst,xs) =
+      let
+        f = fromIntegral <$> NE.head xs :: V2 a
+        fs = slope f
+        l = fromIntegral <$> NE.last xs :: V2 a
+        ls = if isFirst then slope l else se
+      in do
+        tell ["recursion (f=" <> packShow isFirst <> ") at " <> packShow (f + V2 fs 1) <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
+        result <- castShadow (f + V2 fs 1) fs ls isBlocked
+        return $ NE.toList xs <> result
+  in do
+    tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
+    result <- spanResult spanResults freeRecursion (concatMapM recursion . tagFirst)
+    tell ["Returning " <> packShow result]
+    return result
 castShadow :: forall a.( Show a,RealFrac a ) =>
   V2 a -- ^ Starting point
   -> a -- ^ Start slope
