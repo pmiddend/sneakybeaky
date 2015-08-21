@@ -178,7 +178,7 @@ castShadow (V2 sx sy) ss se isBlocked =
     (V2 sxi syi) = round <$> (V2 sx sy)
     -- Non-blocked spans
     spanResults :: [Span PointInt]
-    spanResults = ((`V2` syi) <$>) <$> ( spans (isBlocked . (`V2` syi)) sxi (round (se * sx)) :: [Span Int])
+    spanResults = ((`V2` syi) <$>) <$> ( spans (isBlocked . (`V2` syi)) sxi (round (se * sy)) :: [Span Int])
     recursion :: Span PointInt -> Writer [Text] [PointInt]
     recursion s =
       let
@@ -198,7 +198,7 @@ castShadow (V2 sx sy) ss se isBlocked =
 
 exampleIsBlocked :: PointInt -> Bool
 exampleIsBlocked v = v ^. _y > 16 || v `elem` vs
-  where vs = [V2 9 12,V2 8 12,V2 9 13,V2 8 13,V2 7 13]
+  where vs = [V2 9 12,V2 8 12,V2 9 13,V2 8 13,V2 7 13,V2 4 13,V2 1 13,V2 0 13,V2 9 14,V2 8 14,V2 7 14,V2 9 15,V2 8 15,V2 7 15]
 
 execAndPrintCast :: (Show a, RealFrac a) => V2 a -> (PointInt -> Bool) -> IO ()
 execAndPrintCast s b = printShadowCast . fst . runIdentity . runWriterT $ castShadow s 1 0 b
