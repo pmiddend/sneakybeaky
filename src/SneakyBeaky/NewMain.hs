@@ -9,7 +9,7 @@ module Main where
 import           ClassyPrelude
 import Control.Monad.Writer(Writer,tell)
 import qualified Data.List.NonEmpty as NE
-import           Control.Lens                            (makeLenses,lens,Lens',_2,_1,
+import           Control.Lens                            (makeLenses,Getter,lens,Lens',_2,_1,
                                                           makePrisms, to, (^.),view,(&),ix,(.~))
 import           Linear.V2
 import           Prelude                                 ()
@@ -20,6 +20,7 @@ import           System.Console.SneakyTerm.MonadTerminal
 import           System.Console.SneakyTerm.PointInt
 import           System.Console.SneakyTerm.Rect
 import           System.Console.SneakyTerm.Tile
+import Control.Monad.Writer (runWriterT)
 
 divNearest :: Integral a => a -> a -> a
 divNearest x y = (x + (y `div` 2)) `div` y
@@ -71,6 +72,15 @@ maybeFlipped (Just x) _ f = f x
 
 data Span a = Span Bool Bool (NE.NonEmpty a)
               deriving(Functor)
+
+leftBlocked :: Getter (Span a) Bool
+leftBlocked = to (\(Span l _ _) -> l)
+
+rightBlocked :: Getter (Span a) Bool
+rightBlocked = to (\(Span _ r _) -> r)
+
+spanElems :: Getter (Span a) (NE.NonEmpty a)
+spanElems = to (\(Span _ _ e) -> e)
 
 deriving instance Show a => Show (Span a)
 
@@ -156,7 +166,6 @@ packShow = pack . show
 concatMapM        :: (Monad m) => (a -> m [b]) -> [a] -> m [b]
 concatMapM f xs   =  liftM concat (mapM f xs)
 
-{- new version
 castShadow :: forall a.( Show a,RealFrac a ) =>
   V2 a -- ^ Starting point
   -> a -- ^ Start slope
@@ -168,25 +177,31 @@ castShadow (V2 sx sy) ss se isBlocked =
     -- Integral version of the start vector
     (V2 sxi syi) = round <$> (V2 sx sy)
     -- Non-blocked spans
-    spanResults :: Span PointInt
-    spanResults = (`V2` syi) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
+    spanResults :: [Span PointInt]
+    spanResults = ((`V2` syi) <$>) <$> ( spans (isBlocked . (`V2` syi)) sxi (round (se * sx)) :: [Span Int])
     recursion :: Span PointInt -> Writer [Text] [PointInt]
-    recursion (isFirst,xs) =
+    recursion s =
       let
-        f = fromIntegral <$> NE.head xs :: V2 a
-        fs = slope f
-        l = fromIntegral <$> NE.last xs :: V2 a
-        ls = if isFirst then slope l else se
+        f = fromIntegral <$> NE.head (s ^. spanElems) :: V2 a
+        fs = if (s ^. leftBlocked) then slope f else ss
+        l = fromIntegral <$> NE.last (s ^. spanElems) :: V2 a
+        ls = if (s ^. rightBlocked) then slope l else se
       in do
-        tell ["recursion (f=" <> packShow isFirst <> ") at " <> packShow (f + V2 fs 1) <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
+        tell ["recursion at " <> packShow s <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
         result <- castShadow (f + V2 fs 1) fs ls isBlocked
-        return $ NE.toList xs <> result
+        return $ NE.toList (s ^. spanElems) <> result
   in do
     tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
-    result <- spanResult spanResults freeRecursion (concatMapM recursion . tagFirst)
+    result <- concatMapM recursion spanResults
     tell ["Returning " <> packShow result]
     return result
--}
+
+exampleIsBlocked :: PointInt -> Bool
+exampleIsBlocked v = v ^. _y > 16 || v `elem` vs
+  where vs = [V2 9 12,V2 8 12,V2 9 13,V2 8 13,V2 7 13]
+
+execAndPrintCast :: (Show a, RealFrac a) => V2 a -> (PointInt -> Bool) -> IO ()
+execAndPrintCast s b = printShadowCast . fst . runIdentity . runWriterT $ castShadow s 1 0 b
 
 {-
 -- If starts blocked, calculate new slope, too
