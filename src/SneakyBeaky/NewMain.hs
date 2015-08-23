@@ -7,9 +7,8 @@
 module Main where
 
 import           ClassyPrelude
-import Control.Monad.Writer(Writer,tell)
 import qualified Data.List.NonEmpty as NE
-import           Control.Lens                            (makeLenses,Getter,lens,Lens',_2,_1,
+import           Control.Lens                            (at,makeLenses,Getter,lens,Lens',_2,_1,
                                                           makePrisms, to, (^.),view,(&),ix,(.~))
 import           Linear.V2
 import           Prelude                                 ()
@@ -20,7 +19,7 @@ import           System.Console.SneakyTerm.MonadTerminal
 import           System.Console.SneakyTerm.PointInt
 import           System.Console.SneakyTerm.Rect
 import           System.Console.SneakyTerm.Tile
-import Control.Monad.Writer (runWriterT)
+--import Control.Monad.Writer (Writer,tell,runWriterT)
 
 divNearest :: Integral a => a -> a -> a
 divNearest x y = (x + (y `div` 2)) `div` y
@@ -28,47 +27,6 @@ divNearest x y = (x + (y `div` 2)) `div` y
 maybeFlipped :: Maybe a -> b -> (a -> b) -> b
 maybeFlipped Nothing b _ = b
 maybeFlipped (Just x) _ f = f x
-
-{-
-  Testing simple case:
-
-  castShadow (x=1,y=1,ss=1,se=0) =
-    endx = 0
-    (visibleTiles,remainder) = break isBlocked [V2 [1..0] 1]
-    visibleTiles = [V2 1 1,V2 0 1]
-    remainder = []
-    result = visibleTiles <> castShadow (x=2,y=2,ss=1,se=0)
-
-  castShadow (x=2,y=2,ss=1,se=0) =
-    endx = 0
-    (visibleTiles,remainder) = break isBlocked [V2 [2..0] 2]
-
-  ...
-
-  works
-
-  Testing example case:
-
-  castShadow (x=12,y=12,ss=1,se=0) =
-    endx = 0
-    (visibleTiles,remainder) = break isBlocked [V2 [12..0] 12]
-    visibleTiles = [V2 12 12,V2 11 12,V2 10 12]
-    remainder = [V2 9 12,V2 8 12,...]
-    xs = [V2 8 12,V2 7 12,...]
-    newse = fromIntegral 10 / fromIntegral 12 = 0.83
-    blockerRecursion =
-      castShadow (x=13,y=13,ss=1,se=0.83) =
-        endx = 0.83 * 13 = 10.79
-        (visibleTiles,remainder) = break isBlocked [V2 [13..11] 13]
-        visibleTiles = [V2 13 13,V2 12 13,V2 11 13]
-        remainder = []
-    nextNonblocked = dropWhile isBlocked [V2 8 12,V2 7 12,...]
-    nextNonblocked = [V2 7 12,V2 6 12,...]
-    (fnbx=7,fnby=12)
-    newss = 8/13 = 0.61
-    remainder' =
-      castShadow(x=7,y=12,ss=0.61,se=1)
- -}
 
 data Span a = Span Bool Bool (NE.NonEmpty a)
               deriving(Functor)
@@ -135,22 +93,16 @@ slope (V2 x y) = x / y
 groupByEquals :: (Foldable f, Eq b) => (a -> b) -> f a -> [(b, NE.NonEmpty a)]
 groupByEquals f xs = fmap (\l -> (f (NE.head l),l)) . NE.groupBy ((==) `on` f) $ xs
 
-{-
- - Second implementation, relying on the spans
- - Calculate spans of free blocks
- - Return each of the free spans
- - For each span, start recursive calculation
- -}
 printShadowCast :: [PointInt] -> IO ()
 printShadowCast r =
   let
-    lines :: [(Int,NE.NonEmpty PointInt)]
-    lines = groupByEquals (view _y) (sortBy (comparing (view _y)) r)
+    ls :: [(Int,NE.NonEmpty PointInt)]
+    ls = groupByEquals (view _y) (sortBy (comparing (view _y)) r)
     sortedLines :: [(Int,NE.NonEmpty PointInt)]
-    sortedLines = sortBy (comparing fst) lines
+    sortedLines = sortBy (comparing fst) ls
     numLines = length sortedLines
     mapLine :: (Int,NE.NonEmpty PointInt) -> Text
-    mapLine (n,points) = foldr (\(V2 x _) s -> s & ix (numLines - x - 1) .~ '.') (replicate numLines ' ') points
+    mapLine (_,points) = foldr (\(V2 x _) s -> s & ix (numLines - x - 1) .~ '.') (replicate numLines ' ') points
     mappedLines :: [Text]
     mappedLines = mapLine <$> sortedLines
   in
@@ -166,140 +118,63 @@ packShow = pack . show
 concatMapM        :: (Monad m) => (a -> m [b]) -> [a] -> m [b]
 concatMapM f xs   =  liftM concat (mapM f xs)
 
-castShadow :: forall a.( Show a,RealFrac a ) =>
+castShadowOctant :: forall a.( Show a,RealFrac a ) =>
   V2 a -- ^ Starting point
   -> a -- ^ Start slope
   -> a -- ^ End slope
   -> (PointInt -> Bool) -- ^ Tile position to translucency
-  -> Writer [Text] [PointInt] -- ^ List of lit tiles
-castShadow (V2 sx sy) ss se isBlocked =
+  -> [PointInt] -- ^ List of lit tiles
+castShadowOctant (V2 sx sy) ss se isBlocked =
   let
     -- Integral version of the start vector
-    (V2 sxi syi) = round <$> (V2 sx sy)
+    (V2 sxi syi) = round <$> V2 sx sy
     -- Non-blocked spans
     spanResults :: [Span PointInt]
     spanResults = ((`V2` syi) <$>) <$> ( spans (isBlocked . (`V2` syi)) sxi (round (se * sy)) :: [Span Int])
-    recursion :: Span PointInt -> Writer [Text] [PointInt]
+    recursion :: Span PointInt -> [PointInt]
     recursion s =
       let
         f = fromIntegral <$> NE.head (s ^. spanElems) :: V2 a
-        fs = if (s ^. leftBlocked) then slope f else ss
+        fs = if s ^. leftBlocked then slope f else ss
         l = fromIntegral <$> NE.last (s ^. spanElems) :: V2 a
-        ls = if (s ^. rightBlocked) then slope l else se
-      in do
-        tell ["recursion at " <> packShow s <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
-        result <- castShadow (f + V2 fs 1) fs ls isBlocked
-        return $ NE.toList (s ^. spanElems) <> result
-  in do
-    tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
-    result <- concatMapM recursion spanResults
-    tell ["Returning " <> packShow result]
-    return result
+        ls = if s ^. rightBlocked then slope l else se
+      in
+        castShadowOctant (f + V2 fs 1) fs ls isBlocked
+  in
+    (concatMap NE.toList ( view spanElems <$> spanResults )) <> (concatMap recursion spanResults)
+
+castShadow :: (PointInt -> Bool) -> [PointInt]
+castShadow isBlocked =
+  let
+    castOctant f = f <$> castShadowOctant (V2 1 1) ( 1 :: Float ) 0 (isBlocked . f)
+  in
+   castOctant (\(V2 x y) -> V2 x y) <>
+   castOctant (\(V2 x y) -> V2 (-x) y) <>
+   castOctant (\(V2 x y) -> V2 x (-y)) <>
+   castOctant (\(V2 x y) -> V2 (-x) (-y)) <>
+   castOctant (\(V2 x y) -> V2 y x) <>
+   castOctant (\(V2 x y) -> V2 (-y) x) <>
+   castOctant (\(V2 x y) -> V2 y (-x)) <>
+   castOctant (\(V2 x y) -> V2 (-y) (-x))
 
 exampleIsBlocked :: PointInt -> Bool
-exampleIsBlocked v = v ^. _y > 16 || v `elem` vs
+exampleIsBlocked v = v ^. _y > 16 || v ^. _y < (-16) || v ^. _x < (-16) || v ^. _x > 16 || v `elem` vs
   where vs = [V2 9 12,V2 8 12,V2 9 13,V2 8 13,V2 7 13,V2 4 13,V2 1 13,V2 0 13,V2 9 14,V2 8 14,V2 7 14,V2 9 15,V2 8 15,V2 7 15]
 
-execAndPrintCast :: (Show a, RealFrac a) => V2 a -> (PointInt -> Bool) -> IO ()
-execAndPrintCast s b = printShadowCast . fst . runIdentity . runWriterT $ castShadow s 1 0 b
-
-{-
--- If starts blocked, calculate new slope, too
-castShadow :: forall a.( Show a,RealFrac a ) =>
-  V2 a -- ^ Starting point
-  -> a -- ^ Start slope
-  -> a -- ^ End slope
-  -> (PointInt -> Bool) -- ^ Tile position to translucency
-  -> Writer [Text] [PointInt] -- ^ List of lit tiles
-castShadow (V2 sx sy) ss se isBlocked =
+simpleExample :: PointInt -> Bool
+simpleExample (V2 x y) | abs x > 6 || abs y > 6 = True
+                       | abs y == 2 && x > -2 && x < 2 = True
+                       | otherwise = False
+        
+--execAndPrintCast :: (Show a, RealFrac a) => V2 a -> (PointInt -> Bool) -> IO ()
+--execAndPrintCast s b = printShadowCast . fst . runIdentity . runWriterT $ castShadow s 1 0 b
+execAndPrintCast :: (PointInt -> Bool) -> Text
+execAndPrintCast b =
   let
-    -- Integral version of the start vector
-    (V2 sxi syi) = round <$> (V2 sx sy)
-    -- Non-blocked spans
-    spanResults :: SpanResult PointInt
-    spanResults = (`V2` syi) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
-    freeRecursion :: NE.NonEmpty PointInt -> Writer [Text] [PointInt]
-    freeRecursion xs = do
-      tell ["Free recursion on " <> packShow xs]
-      let
-        f = fromIntegral <$> NE.head xs :: V2 a
-        fs = slope f
-      result <- castShadow (f + V2 fs 1) fs se isBlocked
-      return $ NE.toList xs <> result
-    recursion :: (Bool,NE.NonEmpty PointInt) -> Writer [Text] [PointInt]
-    recursion (isFirst,xs) =
-      let
-        f = fromIntegral <$> NE.head xs :: V2 a
-        fs = slope f
-        l = fromIntegral <$> NE.last xs :: V2 a
-        ls = if isFirst then slope l else se
-      in do
-        tell ["recursion (f=" <> packShow isFirst <> ") at " <> packShow (f + V2 fs 1) <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
-        result <- castShadow (f + V2 fs 1) fs ls isBlocked
-        return $ NE.toList xs <> result
-  in do
-    tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
-    result <- spanResult spanResults freeRecursion (concatMapM recursion . tagFirst)
-    tell ["Returning " <> packShow result]
-    return result
-castShadow :: forall a.( Show a,RealFrac a ) =>
-  V2 a -- ^ Starting point
-  -> a -- ^ Start slope
-  -> a -- ^ End slope
-  -> (PointInt -> Bool) -- ^ Tile position to translucency
-  -> Writer [Text] [PointInt] -- ^ List of lit tiles
-castShadow (V2 sx sy) ss se isBlocked =
-  let
-    -- Integral version of the start vector
-    (V2 sxi syi) = round <$> (V2 sx sy)
-    -- Non-blocked spans
-    spanResults :: SpanResult PointInt
-    spanResults = (`V2` syi) <$> spans (isBlocked . (`V2` syi)) sxi (round (se * sx))
-    freeRecursion :: NE.NonEmpty PointInt -> Writer [Text] [PointInt]
-    freeRecursion xs = do
-      tell ["Free recursion on " <> packShow xs]
-      let
-        f = fromIntegral <$> NE.head xs :: V2 a
-        fs = slope f
-      result <- castShadow (f + V2 fs 1) fs se isBlocked
-      return $ NE.toList xs <> result
-    recursion :: (Bool,NE.NonEmpty PointInt) -> Writer [Text] [PointInt]
-    recursion (isFirst,xs) =
-      let
-        f = fromIntegral <$> NE.head xs :: V2 a
-        fs = slope f
-        l = fromIntegral <$> NE.last xs :: V2 a
-        ls = if isFirst then slope l else se
-      in do
-        tell ["recursion (f=" <> packShow isFirst <> ") at " <> packShow (f + V2 fs 1) <> ", ss=" <> packShow fs <> ", se=" <> packShow ls <> ", f=" <> packShow f <> ", l=" <> packShow l]
-        result <- castShadow (f + V2 fs 1) fs ls isBlocked
-        return $ NE.toList xs <> result
-  in do
-    tell ["Span result sx=" <> packShow sx <> ", sy=" <> packShow sy <> ": " <> packShow spanResults]
-    result <- spanResult spanResults freeRecursion (concatMapM recursion . tagFirst)
-    tell ["Returning " <> packShow result]
-    return result
--}
-  {- First implementation
-  let
-    endx = se * x
-    (visibleTiles,remainder) = break isBlocked [V2 x' (round y) | x' <- [round x..round endx]]
+    r = castShadow b
+    matrix = foldr (\(V2 x y) f -> f & ix (y + 6) . ix (x + 6) .~ '.') (replicate 13 (replicate 13 ' ')) r
   in
-   maybeFlipped (uncons remainder) (visibleTiles <> castShadow (V2 (x + ss) (y+1)) ss se isBlocked) $ \(V2 fbx fby,xs) ->
-     let
-       newse = fromIntegral (fbx + 1) / fromIntegral fby
-       blockerRecursion = castShadow (V2 (x + ss) (y+1)) ss newse isBlocked
-       nextNonblocked = dropWhile isBlocked xs
-       remainder' =
-         maybeFlipped (headMay nextNonblocked) [] $ \(V2 fnbx fnby) ->
-           let
-             newss = fromIntegral (fnbx + 1) / fromIntegral (fnby + 1)
-           in
-             castShadow (fromIntegral <$> (V2 fnbx fnby)) newss se isBlocked
-     in
-       visibleTiles <> blockerRecursion <> remainder'
--}
-
+    unlines . reverse $ matrix
 
 data KeyColor = KeyRed
               | KeyGreen
